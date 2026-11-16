@@ -2,5 +2,5 @@
   "name": "serverless-dns2",
   "pages_build_output_dir": "./public",
   "compatibility_date": "2026-11-01",
-  "placement": { "region": "aws:ap-southeast-1" }
+  "placement": { "mode": "smart" }
 }
