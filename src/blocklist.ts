@@ -4,6 +4,7 @@
  */
 
 import {BLOCKLIST_PATH} from './config.js';
+import {MAGIC} from './trie.js';
 import type {Env} from './types.js';
 
 const RETRY_DELAY_MS = 60 * 1000;
@@ -21,7 +22,12 @@ async function fetchTrie(env: Env, host: string): Promise<Uint32Array | null> {
       throw new Error(`blocklist ${response.status}`);
     }
     const buffer = await response.arrayBuffer();
-    return new Uint32Array(buffer, 0, buffer.byteLength >> 2);
+    const words = new Uint32Array(buffer, 0, buffer.byteLength >> 2);
+    if (words[0] !== MAGIC) {
+      // Pages answers a missing file with index.html.
+      throw new Error('not a blocklist');
+    }
+    return words;
   } catch {
     retryAt = Date.now() + RETRY_DELAY_MS;
     return null;
