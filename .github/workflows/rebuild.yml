@@ -10,7 +10,7 @@ on:
 
 env:
   PROJECT: serverless-dns2
-  KEEP: 3 # newest deployments to keep (TEMPORARY test value, restore to 10)
+  KEEP: 10 # newest deployments to keep
 
 jobs:
   rebuild:
