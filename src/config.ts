@@ -144,3 +144,7 @@ export const BLOCK_HTTPS = false;
 export const ECH_ENABLED = true;
 /** Name whose HTTPS record carries Cloudflare's shared ECH key. */
 export const ECH_FRONT_DOMAIN = 'cloudflare-ech.com';
+
+/** Domain blocklist built by `npm run build-lists` (see blocklist.ts). */
+export const BLOCKLIST_ENABLED = true;
+export const BLOCKLIST_PATH = '/blocklist.bin';

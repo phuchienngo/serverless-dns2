@@ -22,6 +22,8 @@ export interface Result {
 export interface Env {
   /** URL of the upstream DoH resolver. */
   UPSTREAM: string;
+  /** Static assets of the Pages project; holds the blocklist. */
+  ASSETS?: Fetcher;
 }
 
 /** Per-request values supplied by the platform adapter. */

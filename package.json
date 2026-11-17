@@ -3,14 +3,18 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "tsc --noEmit",
+    "check": "tsc --noEmit && tsc --noEmit -p scripts",
     "format": "prettier --write src functions",
-    "deploy": "wrangler pages deploy --branch main"
+    "deploy": "wrangler pages deploy --branch main",
+    "build-lists": "tsx scripts/build-blocklist.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261117.1",
+    "@types/node": "^26.6.6",
     "prettier": "^3.10.1",
+    "tsx": "^4.23.15",
     "typescript": "^7.0.2",
-    "wrangler": "^4.164.0"
+    "wrangler": "^4.164.0",
+    "yaml": "^2.9.1"
   }
 }

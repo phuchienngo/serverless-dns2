@@ -1,0 +1,15 @@
+# Sources for the blocklist. Fill in, then run `npm run build-lists`.
+# A source is an http(s) URL or a local file path. Accepted line formats:
+# plain domains, hosts files (0.0.0.0 domain) and `||domain^` rules.
+# Anything else (regex, wildcards in the middle, modifiers) is ignored.
+lists: []
+#  - https://example.com/blocklist.txt
+
+# Domains that must never be blocked (this also covers their subdomains).
+# Caveat: it cannot punch a hole into a blocked parent domain.
+allow: []
+#  - example.com
+
+# Extra domains to block (this also covers their subdomains).
+block: []
+#  - ads.example.net

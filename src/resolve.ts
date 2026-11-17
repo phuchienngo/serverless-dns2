@@ -5,6 +5,7 @@
 
 import {lookup, store} from './cache.js';
 import {
+  BLOCKLIST_ENABLED,
   BLOCK_AAAA,
   BLOCK_ANY,
   BLOCK_HTTPS,
@@ -26,9 +27,11 @@ import {
   respond,
   u16,
 } from './dns.js';
+import {getBlocklist} from './blocklist.js';
 import {addEch} from './ech.js';
 import {makeEcs} from './ecs.js';
 import type {Env, Question, ResolveOptions, Result} from './types.js';
+import {isBlocked} from './trie.js';
 import {isUndelegated} from './undelegated.js';
 
 const encoder = new TextEncoder();
@@ -211,6 +214,13 @@ export async function resolve(
   }
   if (BLOCK_UNDELEGATED && isUndelegated(q.name)) {
     return {body: respond(q, 3, []), ttl: 3600};
+  }
+
+  if (BLOCKLIST_ENABLED) {
+    const blocklist = await getBlocklist(env, host);
+    if (blocklist && isBlocked(blocklist, q.name)) {
+      return {body: respond(q, 3, []), ttl: 300}; // NXDOMAIN.
+    }
   }
 
   if (BLOCKED_TYPES.has(q.type)) {
