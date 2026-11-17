@@ -1,6 +1,19 @@
 # DoH gateway (Cloudflare Pages)
-1. Edit `UPSTREAM` and `REDIRECTS` in `functions/dns-query.js`.
-2. Deploy: `npx wrangler pages deploy public --project-name serverless-dns2`, add a custom domain (e.g. doh.example.com).
-3. DDR (Android 16 Private DNS): add DNS record in your zone
-   `_dns.doh.example.com  SVCB  1 doh.example.com. alpn="h2,h3" dohpath="/dns-query{?dns}"`
-   then run the two `adb shell device_config put connectivity ...` flags from the loophole README.
+
+- `/dns-query` — RFC 8484 DoH (GET `?dns=`, POST `application/dns-message`). Status codes follow Google Public DNS.
+- `/resolve` — Google-style JSON API (GET): `name`, `type`, `do`, `cd`, `ct`, `edns_client_subnet`.
+  (`/dns-query?name=...` also returns JSON.)
+
+Config: secret `UPSTREAM` (upstream DoH URL, blocklist lives there):
+`wrangler pages secret put UPSTREAM --project-name serverless-dns2`.
+`REDIRECTS` (CDN source -> target) and other knobs are in `src/config.ts`.
+
+Layout: `src/` (TypeScript logic; entry `core.ts`), `functions/dns-query.ts` and `functions/resolve.ts` (Pages adapters).
+
+Dev: `npm install`, `npm run check` (tsc), `npm run format` (Prettier, Google/gts style).
+
+Deploy: `npx wrangler pages deploy --branch main` (or push to `main`).
+
+DDR (Android 16+ Private DNS): add in your zone
+`_dns.dns.example.com  SVCB  1 dns.example.com. alpn="h2,h3" dohpath="/dns-query{?dns}"`
+then set `dns_ddr_version 1` and `networkmonitor_async_privdns_resolution 1` via `adb shell device_config put connectivity ...`.

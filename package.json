@@ -1,0 +1,16 @@
+{
+  "name": "serverless-dns2",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "format": "prettier --write src functions",
+    "deploy": "wrangler pages deploy --branch main"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261117.1",
+    "prettier": "^3.10.1",
+    "typescript": "^7.0.2",
+    "wrangler": "^4.164.0"
+  }
+}
