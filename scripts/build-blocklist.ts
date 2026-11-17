@@ -6,7 +6,7 @@
 import {mkdir, readFile, writeFile} from 'node:fs/promises';
 import {dirname} from 'node:path';
 import {parse} from 'yaml';
-import {END_BIT, HEADER_WORDS, MAGIC, NODE_WORDS, SYMBOL} from '../src/trie.js';
+import {HEADER_WORDS, MAGIC, NODE_WORDS, hashLabel} from '../src/trie.js';
 
 const DOMAIN =
   /^(?=.{1,253}$)([a-z0-9_]([a-z0-9_-]{0,61}[a-z0-9_])?\.)+[a-z][a-z0-9-]{1,62}$/;
@@ -59,55 +59,57 @@ function isUnder(name: string, parent: string): boolean {
   return name === parent || name.endsWith('.' + parent);
 }
 
-/**
- * Builds the trie (see src/trie.ts) breadth-first from the sorted, reversed
- * domains: each node covers a range of keys sharing a prefix.
- */
+interface TrieNode {
+  hash: [number, number];
+  end: boolean;
+  children: Map<string, TrieNode>;
+}
+
 function buildTrie(domains: Iterable<string>): Uint32Array {
-  const keys = [...domains].map(d => [...d].reverse().join('')).sort();
-  if (!keys.length) {
-    return new Uint32Array([MAGIC, 1, 0, 0, 0]);
-  }
-  const from = [0];
-  const to = [keys.length];
-  const depth = [0];
-  const nodes: number[] = [];
-  for (let i = 0; i < from.length; i++) {
-    let start = from[i];
-    const d = depth[i];
-    const ends = keys[start].length === d; // The shortest key sorts first.
-    if (ends) {
-      start++;
-    }
-    let low = 0;
-    let high = ends ? END_BIT : 0;
-    const firstChild = from.length;
-    for (let s = start; s < to[i];) {
-      const code = keys[s].charCodeAt(d);
-      let e = s + 1;
-      while (e < to[i] && keys[e].charCodeAt(d) === code) {
-        e++;
+  const root: TrieNode = {hash: [0, 0], end: false, children: new Map()};
+  for (const domain of domains) {
+    let node = root;
+    let covered = false;
+    for (const label of domain.split('.').reverse()) {
+      if (node.end) {
+        covered = true; // A parent domain is already blocked.
+        break;
       }
-      if (!(ends && code === 46)) {
-        // A listed parent already blocks its subdomains.
-        const symbol = SYMBOL[code];
-        if (symbol < 32) {
-          low |= 1 << symbol;
-        } else {
-          high |= 1 << (symbol - 32);
-        }
-        from.push(s);
-        to.push(e);
-        depth.push(d + 1);
+      const hash = hashLabel(label);
+      const key = `${hash[0]}:${hash[1]}`;
+      let child = node.children.get(key);
+      if (!child) {
+        child = {hash, end: false, children: new Map()};
+        node.children.set(key, child);
       }
-      s = e;
+      node = child;
     }
-    nodes.push(low >>> 0, high >>> 0, firstChild);
+    if (!covered) {
+      node.end = true;
+      node.children.clear(); // The parent now covers all of them.
+    }
   }
-  const words = new Uint32Array(HEADER_WORDS + nodes.length);
+
+  // Breadth-first, so the children of a node are contiguous.
+  const order = [root];
+  const firstChild: number[] = [];
+  for (let i = 0; i < order.length; i++) {
+    firstChild[i] = order.length;
+    const kids = [...order[i].children.values()].sort(
+      (a, b) => a.hash[0] - b.hash[0] || a.hash[1] - b.hash[1]
+    );
+    order.push(...kids);
+  }
+  const words = new Uint32Array(HEADER_WORDS + order.length * NODE_WORDS);
   words[0] = MAGIC;
-  words[1] = nodes.length / NODE_WORDS;
-  words.set(nodes, HEADER_WORDS);
+  words[1] = order.length;
+  order.forEach((node, i) => {
+    const base = HEADER_WORDS + i * NODE_WORDS;
+    words[base] = node.hash[0];
+    words[base + 1] = node.hash[1];
+    words[base + 2] = firstChild[i];
+    words[base + 3] = (node.children.size << 1) | (node.end ? 1 : 0);
+  });
   return words;
 }
 

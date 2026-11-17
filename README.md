@@ -29,7 +29,7 @@ then set `dns_ddr_version 1` and `networkmonitor_async_privdns_resolution 1` via
 
 1. Put your sources in `blocklists.yaml` (`lists`, plus optional `allow` and `block` domains).
 2. `npm run build-lists` downloads them, keeps plain domains only and writes `public/blocklist.bin`
-   (a flat character-level trie in the style of Cloudflare trie-hard; blocking a domain blocks its subdomains).
+   (a flat reversed-label trie with a 64-bit label hash; blocking a domain blocks its subdomains).
    If a source fails, nothing is written.
 3. Commit `public/blocklist.bin` and push (or `npm run deploy`). Blocked names get NXDOMAIN.
 
