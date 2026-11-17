@@ -302,21 +302,23 @@ export async function resolve(
   }
 
   // 2. The Cache API and the upstream resolver race: whichever answers first
-  //    wins. The upstream call always finishes, so it renews the cache.
+  //    wins (reading the Cache API can take longer than asking the upstream).
+  //    The upstream call always finishes, so it renews the cache either way.
   const started = performance.now();
   const fetching = fetchFresh();
-  fetching.catch(() => {}); // Reported only if we end up waiting for it.
   waitUntil?.(fetching.catch(() => {}));
-  const shared = await lookupShared(cache, key, q).catch(() => null);
+  const shared = lookupShared(cache, key, q).catch(() => null);
+  const first = await Promise.race([
+    shared.then(hit => hit?.result ?? null),
+    fetching.catch(() => null),
+  ]);
   if (options.timing) {
-    options.timing.cache = performance.now() - started;
+    options.timing.first = performance.now() - started;
   }
-  if (shared) {
-    return shared.result;
+  if (first) {
+    return first;
   }
-  const result = await fetching;
-  if (options.timing) {
-    options.timing.upstream = performance.now() - started;
-  }
-  return result;
+  // The Cache API had nothing, or the upstream failed: use what is left.
+  const hit = await shared;
+  return hit ? hit.result : fetching;
 }
