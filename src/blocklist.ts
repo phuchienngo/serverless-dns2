@@ -4,18 +4,21 @@
  */
 
 import {BLOCKLIST_PATH} from './config.js';
-import {MAGIC} from './trie.js';
+import {HASH_WORDS, HEADER_WORDS, MAGIC} from './blockset.js';
 import type {Env} from './types.js';
 
 const RETRY_DELAY_MS = 60 * 1000;
 
-let trie: Uint32Array | null = null;
+let hashes: Uint32Array | null = null;
 let loading: Promise<Uint32Array | null> | null = null;
 let retryAt = 0;
 /** Durations of the most recent load, in ms. */
 let lastLoad = {asset: 0, body: 0};
 
-async function fetchTrie(env: Env, host: string): Promise<Uint32Array | null> {
+async function fetchBlockset(
+  env: Env,
+  host: string
+): Promise<Uint32Array | null> {
   try {
     const t0 = performance.now();
     const response = await env.ASSETS!.fetch(
@@ -27,9 +30,15 @@ async function fetchTrie(env: Env, host: string): Promise<Uint32Array | null> {
     }
     const buffer = await response.arrayBuffer();
     lastLoad = {asset: t1 - t0, body: performance.now() - t1};
-    const words = new Uint32Array(buffer, 0, buffer.byteLength >> 2);
-    if (words[0] !== MAGIC) {
-      // Pages answers a missing file with index.html.
+    if (buffer.byteLength % 4 !== 0) {
+      throw new Error('bad blocklist length');
+    }
+    const words = new Uint32Array(buffer);
+    if (
+      words[0] !== MAGIC ||
+      words.length !== HEADER_WORDS + words[1] * HASH_WORDS
+    ) {
+      // Pages may answer a missing file with index.html; old assets are invalid.
       throw new Error('not a blocklist');
     }
     return words;
@@ -43,7 +52,7 @@ async function fetchTrie(env: Env, host: string): Promise<Uint32Array | null> {
  * @return The blocklist if this isolate has already loaded it.
  */
 export function peekBlocklist(): Uint32Array | null {
-  return trie;
+  return hashes;
 }
 
 /**
@@ -55,22 +64,22 @@ export async function getBlocklist(
   host: string,
   timing?: Record<string, number>
 ): Promise<Uint32Array | null> {
-  if (trie) {
-    return trie;
+  if (hashes) {
+    return hashes;
   }
   if (!env.ASSETS || Date.now() < retryAt) {
     return null;
   }
   const start = performance.now();
-  loading ??= fetchTrie(env, host).finally(() => {
+  loading ??= fetchBlockset(env, host).finally(() => {
     loading = null;
   });
-  trie = await loading;
+  hashes = await loading;
   if (timing) {
     timing.cold = 1;
     timing.block = performance.now() - start;
     timing.asset = lastLoad.asset;
     timing.body = lastLoad.body;
   }
-  return trie;
+  return hashes;
 }

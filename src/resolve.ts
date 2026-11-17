@@ -33,7 +33,7 @@ import {getBlocklist, peekBlocklist} from './blocklist.js';
 import {addEch, startEchProbe} from './ech.js';
 import {makeEcs} from './ecs.js';
 import type {Env, Question, ResolveOptions, Result} from './types.js';
-import {isBlocked} from './trie.js';
+import {isBlocked} from './blockset.js';
 import {isUndelegated} from './undelegated.js';
 
 const encoder = new TextEncoder();

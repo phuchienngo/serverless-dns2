@@ -6,15 +6,7 @@
 import {mkdir, readFile, writeFile} from 'node:fs/promises';
 import {dirname} from 'node:path';
 import {parse} from 'yaml';
-import {
-  HEADER_WORDS,
-  MAGIC,
-  MAX_CHILDREN,
-  MAX_NODES,
-  NODE_WORDS,
-  hashLabel,
-  packNode,
-} from '../src/trie.js';
+import {HEADER_WORDS, HASH_WORDS, MAGIC, hashDomain} from '../src/blockset.js';
 
 const DOMAIN =
   /^(?=.{1,253}$)([a-z0-9_]([a-z0-9_-]{0,61}[a-z0-9_])?\.)+[a-z][a-z0-9-]{1,62}$/;
@@ -67,64 +59,37 @@ function isUnder(name: string, parent: string): boolean {
   return name === parent || name.endsWith('.' + parent);
 }
 
-interface TrieNode {
-  hash: [number, number];
-  end: boolean;
-  children: Map<string, TrieNode>;
-}
-
-function buildTrie(domains: Iterable<string>): Uint32Array {
-  const root: TrieNode = {hash: [0, 0], end: false, children: new Map()};
+function buildHashes(domains: Set<string>): Uint32Array {
+  const entries: Array<{name: string; hash: [number, number]}> = [];
   for (const domain of domains) {
-    let node = root;
     let covered = false;
-    for (const label of domain.split('.').reverse()) {
-      if (node.end) {
-        covered = true; // A parent domain is already blocked.
+    for (
+      let dot = domain.indexOf('.');
+      dot >= 0;
+      dot = domain.indexOf('.', dot + 1)
+    ) {
+      if (domains.has(domain.slice(dot + 1))) {
+        covered = true;
         break;
       }
-      const hash = hashLabel(label);
-      const key = `${hash[0]}:${hash[1]}`;
-      let child = node.children.get(key);
-      if (!child) {
-        child = {hash, end: false, children: new Map()};
-        node.children.set(key, child);
-      }
-      node = child;
     }
     if (!covered) {
-      node.end = true;
-      node.children.clear(); // The parent now covers all of them.
+      entries.push({name: domain, hash: hashDomain(domain)});
     }
   }
-
-  // Breadth-first, so the children of a node are contiguous.
-  const order = [root];
-  const firstChild: number[] = [];
-  for (let i = 0; i < order.length; i++) {
-    firstChild[i] = order.length;
-    const kids = [...order[i].children.values()].sort(
-      (a, b) => a.hash[0] - b.hash[0] || a.hash[1] - b.hash[1]
-    );
-    order.push(...kids);
-  }
-  if (order.length > MAX_NODES) {
-    throw new Error(`too many trie nodes: ${order.length}`);
-  }
-  const words = new Uint32Array(HEADER_WORDS + order.length * NODE_WORDS);
+  entries.sort((a, b) => a.hash[0] - b.hash[0] || a.hash[1] - b.hash[1]);
+  const words = new Uint32Array(HEADER_WORDS + entries.length * HASH_WORDS);
   words[0] = MAGIC;
-  words[1] = order.length;
-  order.forEach((node, i) => {
-    if (node.children.size >= MAX_CHILDREN) {
-      throw new Error('too many children under one domain');
+  words[1] = entries.length;
+  entries.forEach((entry, i) => {
+    if (
+      i > 0 &&
+      entry.hash[0] === entries[i - 1].hash[0] &&
+      entry.hash[1] === entries[i - 1].hash[1]
+    ) {
+      throw new Error(`hash collision: ${entries[i - 1].name}, ${entry.name}`);
     }
-    const packed = packNode(
-      node.hash,
-      node.end,
-      firstChild[i],
-      node.children.size
-    );
-    words.set(packed, HEADER_WORDS + i * NODE_WORDS);
+    words.set(entry.hash, HEADER_WORDS + i * HASH_WORDS);
   });
   return words;
 }
@@ -161,11 +126,11 @@ async function main() {
     console.warn('warning: no domains; the blocklist will be empty');
   }
 
-  const trie = buildTrie(domains);
+  const hashes = buildHashes(domains);
   await mkdir(dirname(outPath), {recursive: true});
-  await writeFile(outPath, new Uint8Array(trie.buffer));
+  await writeFile(outPath, new Uint8Array(hashes.buffer));
   console.log(
-    `${domains.size} domains -> ${trie[1]} nodes, ${trie.byteLength} bytes -> ${outPath}`
+    `${domains.size} domains -> ${hashes[1]} hashes, ${hashes.byteLength} bytes -> ${outPath}`
   );
 }
 
