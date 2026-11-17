@@ -5,3 +5,6 @@ node_modules/
 .idea/
 .vercel
 .env*
+
+# Built by `npm run build-lists`
+public/blocklist.bin

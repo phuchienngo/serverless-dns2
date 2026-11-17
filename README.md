@@ -25,12 +25,15 @@ then set `dns_ddr_version 1` and `networkmonitor_async_privdns_resolution 1` via
 - `/resolve?name=8.8.8.8&type=PTR` converts an IP to its reverse name.
 - Best-effort ECH: for Cloudflare-hosted names the HTTPS answer gets Cloudflare's shared `ech` key (`src/ech.ts`).
 
-## Blocklist (manual)
+## Blocklist
 
 1. Put your sources in `blocklists.yaml` (`lists`, plus optional `allow` and `block` domains).
 2. `npm run build-lists` downloads them, keeps plain domains only and writes `public/blocklist.bin`
    (a flat reversed-label trie with a 64-bit label hash; blocking a domain blocks its subdomains).
-   If a source fails, nothing is written.
-3. Commit `public/blocklist.bin` and push (or `npm run deploy`). Blocked names get NXDOMAIN.
+   If a source fails, nothing is written and the build fails.
+3. The file is not committed. Cloudflare Pages builds it on every push: in the project's
+   Settings -> Builds, set **Build command** to `npm run build-lists` and **Build output directory**
+   to `public`. `npm run deploy` builds it locally and uploads.
 
-Each isolate loads the file once into memory. `allow` cannot punch a hole into a blocked parent domain.
+Blocked names get NXDOMAIN. Each isolate loads the file once into memory.
+`allow` cannot punch a hole into a blocked parent domain.
