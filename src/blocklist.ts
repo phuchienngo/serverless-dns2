@@ -40,6 +40,13 @@ async function fetchTrie(env: Env, host: string): Promise<Uint32Array | null> {
 }
 
 /**
+ * @return The blocklist if this isolate has already loaded it.
+ */
+export function peekBlocklist(): Uint32Array | null {
+  return trie;
+}
+
+/**
  * @return The blocklist, or null if there is none (or it failed to load; a
  *     failed load is retried after a minute).
  */

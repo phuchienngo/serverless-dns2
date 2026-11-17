@@ -17,7 +17,8 @@ import {
   TYPE_AAAA,
   TYPE_HTTPS,
   TYPE_SVCB,
-  HEDGE_DELAY_MS,
+  HEDGE_MAX_MS,
+  HEDGE_MIN_MS,
   UPSTREAM_TIMEOUT_MS,
 } from './config.js';
 import {
@@ -28,7 +29,7 @@ import {
   respond,
   u16,
 } from './dns.js';
-import {getBlocklist} from './blocklist.js';
+import {getBlocklist, peekBlocklist} from './blocklist.js';
 import {addEch, startEchProbe} from './ech.js';
 import {makeEcs} from './ecs.js';
 import type {Env, Question, ResolveOptions, Result} from './types.js';
@@ -77,26 +78,37 @@ async function post(
   }
 }
 
+/** Recent upstream latency in ms (moving average), for the hedge delay. */
+let latencyAverage = 30;
+
 /**
- * Sends a query to the upstream resolver. If it has not answered within
- * HEDGE_DELAY_MS, the query is also sent on a second connection (to
- * UPSTREAM_BACKUP if set), and the first answer wins.
+ * Sends a query to the upstream resolver. If it has not answered after about
+ * three times its recent latency, the query is also sent on a second
+ * connection (to UPSTREAM_BACKUP if set), and the first answer wins.
  */
 async function forward(env: Env, wire: Uint8Array): Promise<Uint8Array> {
   const controllers = [new AbortController(), new AbortController()];
+  const delay = Math.min(
+    HEDGE_MAX_MS,
+    Math.max(HEDGE_MIN_MS, 3 * latencyAverage)
+  );
+  const started = performance.now();
   let done = false;
   const hedge = async () => {
-    await new Promise(resolve => setTimeout(resolve, HEDGE_DELAY_MS));
+    await new Promise(resolve => setTimeout(resolve, delay));
     if (done) {
       throw new Error('not needed');
     }
     return post(env.UPSTREAM_BACKUP || env.UPSTREAM, wire, controllers[1]);
   };
   try {
-    return await Promise.any([
+    const body = await Promise.any([
       post(env.UPSTREAM, wire, controllers[0]),
       hedge(),
     ]);
+    const elapsed = Math.min(performance.now() - started, 300);
+    latencyAverage = 0.8 * latencyAverage + 0.2 * elapsed;
+    return body;
   } finally {
     done = true;
     controllers.forEach(c => c.abort()); // Cancel the loser.
@@ -239,8 +251,7 @@ export async function resolve(
   q: Question,
   options: ResolveOptions
 ): Promise<Result> {
-  const {env, host, cache, waitUntil} = options;
-  const flags = {dnssec: !!options.dnssec, cd: !!options.cd};
+  const {env, host} = options;
 
   const isDdr =
     q.type === TYPE_SVCB &&
@@ -253,11 +264,34 @@ export async function resolve(
   }
 
   if (BLOCKLIST_ENABLED) {
-    const blocklist = await getBlocklist(env, host, options.timing);
-    if (blocklist && isBlocked(blocklist, q.name)) {
+    let blocklist = peekBlocklist();
+    if (!blocklist) {
+      // This isolate has not loaded the blocklist yet. Start answering while
+      // it loads, and discard the answer if the name turns out to be listed.
+      const loading = getBlocklist(env, host, options.timing);
+      const answering = answer(q, options);
+      answering.catch(() => {});
+      blocklist = await loading;
+      if (blocklist && isBlocked(blocklist, q.name)) {
+        return {body: respond(q, 3, []), ttl: 300}; // NXDOMAIN.
+      }
+      return answering;
+    }
+    if (isBlocked(blocklist, q.name)) {
       return {body: respond(q, 3, []), ttl: 300}; // NXDOMAIN.
     }
   }
+
+  return answer(q, options);
+}
+
+/**
+ * Answers a question that is neither special nor blocked: local rules, then
+ * the caches and the upstream resolver.
+ */
+async function answer(q: Question, options: ResolveOptions): Promise<Result> {
+  const {env, host, cache, waitUntil} = options;
+  const flags = {dnssec: !!options.dnssec, cd: !!options.cd};
 
   if (BLOCKED_TYPES.has(q.type)) {
     return {body: respond(q, 0, []), ttl: 3600};

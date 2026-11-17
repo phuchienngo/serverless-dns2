@@ -13,10 +13,10 @@ export const MAX_DNS_PARAM = 700;
 export const UPSTREAM_TIMEOUT_MS = 4000;
 
 /** Answers kept in the isolate's memory, in front of the Cache API. */
-export const LOCAL_CACHE_SIZE = 500;
+export const LOCAL_CACHE_SIZE = 5000;
 
 /** Cached answers live at least this long, in seconds. */
-export const MIN_CACHE_TTL = 30;
+export const MIN_CACHE_TTL = 60;
 
 /**
  * An entry this close to expiring is refreshed early on 1 in 6 lookups, so
@@ -29,8 +29,12 @@ export const STALE_MAX_S = 6 * 3600;
 /** TTL given to clients for such a stale answer. */
 export const STALE_TTL = 30;
 
-/** Send the query to a second connection if the first has not answered. */
-export const HEDGE_DELAY_MS = 100;
+/**
+ * Send the query to a second connection if the first has not answered after
+ * three times the recent average latency, but not sooner or later than these.
+ */
+export const HEDGE_MIN_MS = 40;
+export const HEDGE_MAX_MS = 150;
 
 /** Answer NXDOMAIN locally for private and undelegated names. */
 export const BLOCK_UNDELEGATED = true;

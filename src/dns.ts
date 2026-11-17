@@ -235,8 +235,34 @@ export function parseAnswers(resp: Uint8Array): AnswerRecord[] {
 export function minTtl(resp: Uint8Array): number {
   try {
     const answers = parseAnswers(resp);
-    return answers.length ? Math.min(...answers.map(a => a.ttl), 3600) : 30;
+    if (answers.length) {
+      return Math.min(...answers.map(a => a.ttl), 3600);
+    }
+    return Math.min(negativeTtl(resp) ?? 30, 3600);
   } catch {
     return 30;
   }
+}
+
+/**
+ * @return How long an empty or NXDOMAIN answer may be cached (RFC 2308): the
+ *     smaller of the SOA record's TTL and its MINIMUM field; null if the
+ *     authority section has no SOA record.
+ */
+function negativeTtl(resp: Uint8Array): number | null {
+  const view = new DataView(resp.buffer, resp.byteOffset, resp.byteLength);
+  const answers = view.getUint16(6);
+  const authority = view.getUint16(8);
+  let offset = skipName(resp, 12) + 4;
+  for (let i = 0; i < answers + authority; i++) {
+    offset = skipName(resp, offset);
+    const length = view.getUint16(offset + 8);
+    const rdata = offset + 10;
+    if (i >= answers && view.getUint16(offset) === 6) {
+      const minimum = view.getUint32(rdata + length - 4);
+      return Math.min(view.getUint32(offset + 4), minimum);
+    }
+    offset = rdata + length;
+  }
+  return null;
 }
