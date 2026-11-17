@@ -24,6 +24,14 @@ export const MIN_CACHE_TTL = 30;
  */
 export const REFRESH_EARLY_MS = 10000;
 
+/** How long past its TTL an answer may still be served while it is refreshed. */
+export const STALE_MAX_S = 6 * 3600;
+/** TTL given to clients for such a stale answer. */
+export const STALE_TTL = 30;
+
+/** Send the query to a second connection if the first has not answered. */
+export const HEDGE_DELAY_MS = 100;
+
 /** Answer NXDOMAIN locally for private and undelegated names. */
 export const BLOCK_UNDELEGATED = true;
 

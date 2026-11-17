@@ -4,7 +4,13 @@
  * by all isolates in a data center, but each read costs a few milliseconds).
  */
 
-import {LOCAL_CACHE_SIZE, MIN_CACHE_TTL, REFRESH_EARLY_MS} from './config.js';
+import {
+  LOCAL_CACHE_SIZE,
+  MIN_CACHE_TTL,
+  REFRESH_EARLY_MS,
+  STALE_MAX_S,
+  STALE_TTL,
+} from './config.js';
 import {parseAnswers, u16} from './dns.js';
 import type {Question, Result} from './types.js';
 
@@ -48,32 +54,51 @@ class LruCache {
 
 const localCache = new LruCache(LOCAL_CACHE_SIZE);
 
+/** A cached answer for a question; `refresh` asks the caller to renew it. */
+export interface Hit {
+  result: Result;
+  refresh: boolean;
+}
+
+type Freshness = 'fresh' | 'early' | 'stale' | 'expired';
+
 /**
  * @param now Milliseconds.
- * @return Whether the entry may still be served.
+ * @return `early` is a fresh entry about to expire (renewed with a small
+ *     chance on each use, so that clients rarely wait); `stale` is expired but
+ *     still servable.
  */
-function isFresh(entry: Entry, now: number): boolean {
+function classify(entry: Entry, now: number): Freshness {
   const remaining = entry.storedAt + entry.ttl * 1000 - now;
-  if (remaining <= 0) {
-    return false;
+  if (remaining <= -STALE_MAX_S * 1000) {
+    return 'expired';
   }
-  return !(remaining < REFRESH_EARLY_MS && Math.random() < 1 / 6);
+  if (remaining <= 0) {
+    return 'stale';
+  }
+  return remaining < REFRESH_EARLY_MS && Math.random() < 1 / 6
+    ? 'early'
+    : 'fresh';
 }
 
 /**
- * Turns an entry into a response for `q`, with every answer TTL set to the
- * time left in the cache.
+ * Turns an entry into a hit for `q`, with every answer TTL set to the time
+ * left in the cache (or a short one for a stale answer).
  * @param now Milliseconds.
  */
-function serve(entry: Entry, q: Question, now: number): Result | null {
-  const body = entry.body.slice();
-  if (body.length < 12 + q.raw.length) {
+function serve(entry: Entry, q: Question, now: number): Hit | null {
+  const freshness = classify(entry, now);
+  if (freshness === 'expired' || entry.body.length < 12 + q.raw.length) {
     return null;
   }
-  const remaining = Math.max(
-    1,
-    Math.ceil((entry.storedAt + entry.ttl * 1000 - now) / 1000)
-  );
+  const body = entry.body.slice();
+  const remaining =
+    freshness === 'stale'
+      ? STALE_TTL
+      : Math.max(
+          1,
+          Math.ceil((entry.storedAt + entry.ttl * 1000 - now) / 1000)
+        );
   body.set(u16(q.id), 0);
   body.set(q.raw, 12); // Same length as stored; restores the client's case.
   try {
@@ -84,28 +109,31 @@ function serve(entry: Entry, q: Question, now: number): Result | null {
   } catch {
     return null;
   }
-  return {body, ttl: remaining, hit: true};
+  return {
+    result: {body, ttl: remaining, hit: true},
+    refresh: freshness !== 'fresh',
+  };
 }
 
 /**
- * Looks an answer up: memory first, then the Cache API.
+ * Looks an answer up in the isolate's memory (instant).
  */
-export async function lookup(
+export function lookupLocal(key: string, q: Question): Hit | null {
+  const entry = localCache.get(key);
+  return entry ? serve(entry, q, Date.now()) : null;
+}
+
+/**
+ * Looks an answer up in the Cache API (shared by the data center).
+ */
+export async function lookupShared(
   cache: Cache | undefined,
   key: string,
   q: Question
-): Promise<Result | null> {
-  const local = localCache.get(key);
-  if (local && isFresh(local, Date.now())) {
-    const result = serve(local, q, Date.now());
-    if (result) {
-      return result;
-    }
-  }
+): Promise<Hit | null> {
   if (!cache) {
     return null;
   }
-
   const hit = await cache.match(new Request(key));
   if (!hit) {
     return null;
@@ -115,7 +143,7 @@ export async function lookup(
     storedAt: Number(hit.headers.get('x-t')) * 1000,
     ttl: Number(hit.headers.get('x-ttl')),
   };
-  if (!(entry.storedAt > 0 && entry.ttl > 0) || !isFresh(entry, Date.now())) {
+  if (!(entry.storedAt > 0 && entry.ttl > 0)) {
     return null;
   }
   localCache.put(key, entry); // Write-through to the faster tier.
@@ -151,7 +179,8 @@ export function store(
     new Request(key),
     new Response(body, {
       headers: {
-        'cache-control': `public, max-age=${entry.ttl}`,
+        // Kept past its TTL so that it can be served stale.
+        'cache-control': `public, max-age=${entry.ttl + STALE_MAX_S}`,
         'x-t': String(Math.floor(entry.storedAt / 1000)),
         'x-ttl': String(entry.ttl),
       },

@@ -3,7 +3,7 @@
  * upstream resolver. Shared by the `/dns-query` and `/resolve` endpoints.
  */
 
-import {lookup, store} from './cache.js';
+import {lookupLocal, lookupShared, store} from './cache.js';
 import {
   BLOCKLIST_ENABLED,
   BLOCK_AAAA,
@@ -17,6 +17,7 @@ import {
   TYPE_AAAA,
   TYPE_HTTPS,
   TYPE_SVCB,
+  HEDGE_DELAY_MS,
   UPSTREAM_TIMEOUT_MS,
 } from './config.js';
 import {
@@ -45,26 +46,61 @@ const BLOCKED_TYPES = new Set<number>([
 ]);
 
 /**
- * Sends a query to the upstream resolver.
+ * Sends a query to one DoH resolver.
+ */
+async function post(
+  url: string,
+  wire: Uint8Array,
+  controller: AbortController
+): Promise<Uint8Array> {
+  const timer = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/dns-message',
+        accept: 'application/dns-message',
+      },
+      body: wire,
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`upstream ${response.status}`);
+    }
+    const body = new Uint8Array(await response.arrayBuffer());
+    if (body.length < 12) {
+      throw new Error('short upstream response');
+    }
+    return body;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Sends a query to the upstream resolver. If it has not answered within
+ * HEDGE_DELAY_MS, the query is also sent on a second connection (to
+ * UPSTREAM_BACKUP if set), and the first answer wins.
  */
 async function forward(env: Env, wire: Uint8Array): Promise<Uint8Array> {
-  const response = await fetch(env.UPSTREAM, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/dns-message',
-      accept: 'application/dns-message',
-    },
-    body: wire,
-    signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
-  });
-  if (!response.ok) {
-    throw new Error(`upstream ${response.status}`);
+  const controllers = [new AbortController(), new AbortController()];
+  let done = false;
+  const hedge = async () => {
+    await new Promise(resolve => setTimeout(resolve, HEDGE_DELAY_MS));
+    if (done) {
+      throw new Error('not needed');
+    }
+    return post(env.UPSTREAM_BACKUP || env.UPSTREAM, wire, controllers[1]);
+  };
+  try {
+    return await Promise.any([
+      post(env.UPSTREAM, wire, controllers[0]),
+      hedge(),
+    ]);
+  } finally {
+    done = true;
+    controllers.forEach(c => c.abort()); // Cancel the loser.
   }
-  const body = new Uint8Array(await response.arrayBuffer());
-  if (body.length < 12) {
-    throw new Error('short upstream response');
-  }
-  return body;
 }
 
 /**
@@ -241,24 +277,46 @@ export async function resolve(
   }
 
   const key = cacheKey(host, q, ecs, flags.dnssec, flags.cd);
-  const cacheStart = performance.now();
-  const cached = await lookup(cache, key, q);
-  if (options.timing) {
-    options.timing.cache = performance.now() - cacheStart;
-  }
-  if (cached) {
-    return cached;
+  const fetchFresh = async () => {
+    const result = await coalesce(key, q, async () =>
+      addEch(q, await askUpstream(q, env, ecs, flags), ecs, wire =>
+        forward(env, wire)
+      )
+    );
+    store(cache, key, result, waitUntil);
+    return result;
+  };
+  const refreshInBackground = () => {
+    const refreshing = fetchFresh().catch(() => {});
+    waitUntil?.(refreshing);
+  };
+
+  // 1. Memory: instant. A stale or expiring answer is served at once and
+  //    renewed in the background.
+  const local = lookupLocal(key, q);
+  if (local) {
+    if (local.refresh) {
+      refreshInBackground();
+    }
+    return local.result;
   }
 
-  const upstreamStart = performance.now();
-  const result = await coalesce(key, q, async () =>
-    addEch(q, await askUpstream(q, env, ecs, flags), ecs, wire =>
-      forward(env, wire)
-    )
-  );
+  // 2. The Cache API and the upstream resolver race: whichever answers first
+  //    wins. The upstream call always finishes, so it renews the cache.
+  const started = performance.now();
+  const fetching = fetchFresh();
+  fetching.catch(() => {}); // Reported only if we end up waiting for it.
+  waitUntil?.(fetching.catch(() => {}));
+  const shared = await lookupShared(cache, key, q).catch(() => null);
   if (options.timing) {
-    options.timing.upstream = performance.now() - upstreamStart;
+    options.timing.cache = performance.now() - started;
   }
-  store(cache, key, result, waitUntil);
+  if (shared) {
+    return shared.result;
+  }
+  const result = await fetching;
+  if (options.timing) {
+    options.timing.upstream = performance.now() - started;
+  }
   return result;
 }

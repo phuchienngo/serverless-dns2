@@ -22,6 +22,8 @@ export interface Result {
 export interface Env {
   /** URL of the upstream DoH resolver. */
   UPSTREAM: string;
+  /** Optional second DoH resolver for hedged queries (default: UPSTREAM). */
+  UPSTREAM_BACKUP?: string;
   /** Static assets of the Pages project; holds the blocklist. */
   ASSETS?: Fetcher;
 }

@@ -37,3 +37,11 @@ then set `dns_ddr_version 1` and `networkmonitor_async_privdns_resolution 1` via
 
 Blocked names get NXDOMAIN. Each isolate loads the file once into memory.
 `allow` cannot punch a hole into a blocked parent domain.
+
+## Latency
+
+- Serve-stale: an expired answer (up to 6 h past its TTL) is returned at once with TTL 30 and renewed in the background.
+- The Cache API lookup and the upstream call run in parallel; the first answer wins and the upstream call always renews the cache.
+- Hedging: if the upstream has not answered after 100 ms the query is also sent on a second connection, to the optional
+  `UPSTREAM_BACKUP` secret (a second DoH URL) or else to `UPSTREAM` again. The first answer wins.
+- `Server-Timing` on the `/resolve` and `/dns-query` responses shows `cache`, `upstream` and, on a cold isolate, `block`/`asset`.
