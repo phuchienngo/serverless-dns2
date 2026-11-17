@@ -39,9 +39,7 @@ export const BLOCK_UNDELEGATED = true;
  * CDN redirects: the key resolves to the A/AAAA answers of the value.
  *
  */
-export const REDIRECTS: Record<string, string> = {
-  'www.bilibili.tv': 'www.bilibili.tv.w.cdngslb.com',
-};
+export const REDIRECTS: Record<string, string> = {};
 
 /**
  * Record type names accepted by the JSON API.
