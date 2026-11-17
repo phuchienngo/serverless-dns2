@@ -19,6 +19,8 @@ import {
   TYPE_SVCB,
   HEDGE_MAX_MS,
   HEDGE_MIN_MS,
+  UPSTREAM,
+  UPSTREAM_BACKUP,
   UPSTREAM_TIMEOUT_MS,
 } from './config.js';
 import {
@@ -99,11 +101,11 @@ async function forward(env: Env, wire: Uint8Array): Promise<Uint8Array> {
     if (done) {
       throw new Error('not needed');
     }
-    return post(env.UPSTREAM_BACKUP || env.UPSTREAM, wire, controllers[1]);
+    return post(UPSTREAM_BACKUP || UPSTREAM, wire, controllers[1]);
   };
   try {
     const body = await Promise.any([
-      post(env.UPSTREAM, wire, controllers[0]),
+      post(UPSTREAM, wire, controllers[0]),
       hedge(),
     ]);
     const elapsed = Math.min(performance.now() - started, 300);

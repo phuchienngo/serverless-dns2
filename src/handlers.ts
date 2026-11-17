@@ -66,9 +66,6 @@ export async function handle(
   ctx: Context
 ): Promise<Response> {
   const url = new URL(request.url);
-  if (!ctx.env.UPSTREAM) {
-    return textResponse('UPSTREAM not configured', 500);
-  }
 
   const method = request.method;
   if (method === 'HEAD') {
@@ -173,9 +170,6 @@ export async function handleJson(
 ): Promise<Response> {
   const url = new URL(request.url);
   const params = url.searchParams;
-  if (!ctx.env.UPSTREAM) {
-    return textResponse('UPSTREAM not configured', 500);
-  }
   if (request.method === 'HEAD') {
     return textResponse('bad request', 400, {allow: 'GET'});
   }

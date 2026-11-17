@@ -4,9 +4,7 @@
 - `/resolve` — Google-style JSON API (GET): `name`, `type`, `do`, `cd`, `ct`, `edns_client_subnet`.
   (`/dns-query?name=...` also returns JSON.)
 
-Config: secret `UPSTREAM` (upstream DoH URL, blocklist lives there):
-`wrangler pages secret put UPSTREAM --project-name serverless-dns2`.
-`REDIRECTS` (CDN source -> target) and other knobs are in `src/config.ts`.
+Config: no secrets. The upstream DoH URL (`UPSTREAM`, optional `UPSTREAM_BACKUP`) and the other knobs are in `src/config.ts`.
 
 Layout: `src/` (TypeScript logic; entry `core.ts`), `functions/dns-query.ts` and `functions/resolve.ts` (Pages adapters).
 
@@ -43,5 +41,5 @@ Blocked names get NXDOMAIN. Each isolate loads the file once into memory.
 - Serve-stale: an expired answer (up to 6 h past its TTL) is returned at once with TTL 30 and renewed in the background.
 - The Cache API lookup and the upstream call run in parallel; the first answer wins and the upstream call always renews the cache.
 - Hedging: if the upstream has not answered after 100 ms the query is also sent on a second connection, to the optional
-  `UPSTREAM_BACKUP` secret (a second DoH URL) or else to `UPSTREAM` again. The first answer wins.
+  `UPSTREAM_BACKUP` (a second DoH URL) or else to `UPSTREAM` again. The first answer wins.
 - `Server-Timing` on the `/resolve` and `/dns-query` responses shows `cache`, `upstream` and, on a cold isolate, `block`/`asset`.
