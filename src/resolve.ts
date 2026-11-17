@@ -241,16 +241,24 @@ export async function resolve(
   }
 
   const key = cacheKey(host, q, ecs, flags.dnssec, flags.cd);
+  const cacheStart = performance.now();
   const cached = await lookup(cache, key, q);
+  if (options.timing) {
+    options.timing.cache = performance.now() - cacheStart;
+  }
   if (cached) {
     return cached;
   }
 
+  const upstreamStart = performance.now();
   const result = await coalesce(key, q, async () =>
     addEch(q, await askUpstream(q, env, ecs, flags), ecs, wire =>
       forward(env, wire)
     )
   );
+  if (options.timing) {
+    options.timing.upstream = performance.now() - upstreamStart;
+  }
   store(cache, key, result, waitUntil);
   return result;
 }
