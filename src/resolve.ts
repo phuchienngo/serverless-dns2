@@ -29,7 +29,7 @@ import {
   u16,
 } from './dns.js';
 import {getBlocklist} from './blocklist.js';
-import {addEch} from './ech.js';
+import {addEch, startEchProbe} from './ech.js';
 import {makeEcs} from './ecs.js';
 import type {Env, Question, ResolveOptions, Result} from './types.js';
 import {isBlocked} from './trie.js';
@@ -278,11 +278,10 @@ export async function resolve(
 
   const key = cacheKey(host, q, ecs, flags.dnssec, flags.cd);
   const fetchFresh = async () => {
-    const result = await coalesce(key, q, async () =>
-      addEch(q, await askUpstream(q, env, ecs, flags), ecs, wire =>
-        forward(env, wire)
-      )
-    );
+    const result = await coalesce(key, q, async () => {
+      const probe = startEchProbe(q, ecs, wire => forward(env, wire));
+      return addEch(await askUpstream(q, env, ecs, flags), q, probe);
+    });
     store(cache, key, result, waitUntil);
     return result;
   };
