@@ -6,7 +6,15 @@
 import {mkdir, readFile, writeFile} from 'node:fs/promises';
 import {dirname} from 'node:path';
 import {parse} from 'yaml';
-import {HEADER_WORDS, MAGIC, NODE_WORDS, hashLabel} from '../src/trie.js';
+import {
+  HEADER_WORDS,
+  MAGIC,
+  MAX_CHILDREN,
+  MAX_NODES,
+  NODE_WORDS,
+  hashLabel,
+  packNode,
+} from '../src/trie.js';
 
 const DOMAIN =
   /^(?=.{1,253}$)([a-z0-9_]([a-z0-9_-]{0,61}[a-z0-9_])?\.)+[a-z][a-z0-9-]{1,62}$/;
@@ -100,15 +108,23 @@ function buildTrie(domains: Iterable<string>): Uint32Array {
     );
     order.push(...kids);
   }
+  if (order.length > MAX_NODES) {
+    throw new Error(`too many trie nodes: ${order.length}`);
+  }
   const words = new Uint32Array(HEADER_WORDS + order.length * NODE_WORDS);
   words[0] = MAGIC;
   words[1] = order.length;
   order.forEach((node, i) => {
-    const base = HEADER_WORDS + i * NODE_WORDS;
-    words[base] = node.hash[0];
-    words[base + 1] = node.hash[1];
-    words[base + 2] = firstChild[i];
-    words[base + 3] = (node.children.size << 1) | (node.end ? 1 : 0);
+    if (node.children.size >= MAX_CHILDREN) {
+      throw new Error('too many children under one domain');
+    }
+    const packed = packNode(
+      node.hash,
+      node.end,
+      firstChild[i],
+      node.children.size
+    );
+    words.set(packed, HEADER_WORDS + i * NODE_WORDS);
   });
   return words;
 }

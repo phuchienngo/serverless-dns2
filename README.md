@@ -29,7 +29,7 @@ then set `dns_ddr_version 1` and `networkmonitor_async_privdns_resolution 1` via
 
 1. Put your sources in `blocklists.yaml` (`lists`, plus optional `allow` and `block` domains).
 2. `npm run build-lists` downloads them, keeps plain domains only and writes `public/blocklist.bin`
-   (a flat reversed-label trie with a 64-bit label hash; blocking a domain blocks its subdomains).
+   (a flat reversed-label trie, 12 bytes per node with a 52-bit label hash; blocking a domain blocks its subdomains).
    If a source fails, nothing is written and the build fails.
 3. The file is not committed. Cloudflare Pages builds it on every push: in the project's
    Settings -> Builds, set **Build command** to `npm run build-lists` and **Build output directory**
