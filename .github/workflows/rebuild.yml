@@ -1,0 +1,44 @@
+# Rebuilds the blocklist every day by triggering a Cloudflare Pages build.
+# The build runs `npm run build-lists`; if a source fails the build fails and
+# the previous deployment keeps serving. Old deployments are pruned first.
+name: Rebuild blocklist
+
+on:
+  schedule:
+    - cron: '17 20 * * *' # 03:17 in Vietnam (UTC+7)
+  workflow_dispatch:
+
+env:
+  PROJECT: serverless-dns2
+  KEEP: 10 # newest deployments to keep
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete old deployments
+        env:
+          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          project="https://api.cloudflare.com/client/v4/accounts/$ACCOUNT/pages/projects/$PROJECT"
+          api="$project/deployments"
+          # Never touch the deployment that is serving production right now.
+          live=$(curl --fail --silent --show-error -H "Authorization: Bearer $TOKEN" "$project" |
+            jq -r '.result.canonical_deployment.id')
+          [ -n "$live" ] && [ "$live" != null ] || { echo "no live deployment id"; exit 1; }
+          for round in 1 2 3 4 5; do
+            # Newest first; page 2 onward is everything past the first KEEP.
+            ids=$(curl --fail --silent --show-error -H "Authorization: Bearer $TOKEN" \
+              "$api?per_page=100&sort_by=created_on&sort_order=desc" |
+              jq -r --argjson keep "$KEEP" --arg live "$live" '.result[$keep:][] | select(.id != $live) | .id')
+            [ -z "$ids" ] && break
+            for id in $ids; do
+              curl --silent -X DELETE -H "Authorization: Bearer $TOKEN" "$api/$id?force=true" |
+                jq -r --arg id "$id" 'if .success then "deleted \($id)" else "kept \($id): \(.errors[0].message)" end'
+            done
+          done
+      - name: Trigger the Pages deploy hook
+        env:
+          HOOK: ${{ secrets.PAGES_DEPLOY_HOOK }}
+        run: curl --fail --silent --show-error -X POST "$HOOK"

@@ -43,3 +43,11 @@ Blocked names get NXDOMAIN. Each isolate loads the file once into memory.
 - Hedging: if the upstream has not answered after 100 ms the query is also sent on a second connection, to the optional
   `UPSTREAM_BACKUP` (a second DoH URL) or else to `UPSTREAM` again. The first answer wins.
 - `Server-Timing` on the `/resolve` and `/dns-query` responses shows `cache`, `upstream` and, on a cold isolate, `block`/`asset`.
+
+Daily rebuild: `.github/workflows/rebuild.yml` prunes old deployments (keeps the newest 10) and then calls a Pages
+Deploy Hook (also runnable from the Actions tab). Setup, once:
+- Pages -> Settings -> Builds -> Deploy hooks: add a hook for `main`; store its URL as the GitHub secret `PAGES_DEPLOY_HOOK`.
+- Cloudflare API token with permission "Account -> Cloudflare Pages -> Edit"; store it as `CLOUDFLARE_API_TOKEN`,
+  and your account id as `CLOUDFLARE_ACCOUNT_ID`.
+
+A failed build leaves the previous deployment serving.
