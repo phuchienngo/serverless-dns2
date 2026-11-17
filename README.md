@@ -17,3 +17,10 @@ Deploy: `npx wrangler pages deploy --branch main` (or push to `main`).
 DDR (Android 16+ Private DNS): add in your zone
 `_dns.dns.example.com  SVCB  1 dns.example.com. alpn="h2,h3" dohpath="/dns-query{?dns}"`
 then set `dns_ddr_version 1` and `networkmonitor_async_privdns_resolution 1` via `adb shell device_config put connectivity ...`.
+
+## Extras
+
+- Honours a client-supplied ECS (dnsproxy / AdGuard Home `edns-addr`); empty subnets such as `::/0` are ignored.
+- `BLOCK_ANY/AAAA/PTR/HTTPS` in `src/config.ts` answer those query types with NODATA locally.
+- `/resolve?name=8.8.8.8&type=PTR` converts an IP to its reverse name.
+- Best-effort ECH: for Cloudflare-hosted names the HTTPS answer gets Cloudflare's shared `ech` key (`src/ech.ts`).

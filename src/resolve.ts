@@ -5,6 +5,10 @@
 
 import {lookup, store} from './cache.js';
 import {
+  BLOCK_AAAA,
+  BLOCK_ANY,
+  BLOCK_HTTPS,
+  BLOCK_PTR,
   BLOCK_UNDELEGATED,
   ECS_ENABLED,
   REDIRECTS,
@@ -22,11 +26,20 @@ import {
   respond,
   u16,
 } from './dns.js';
+import {addEch} from './ech.js';
 import {makeEcs} from './ecs.js';
 import type {Env, Question, ResolveOptions, Result} from './types.js';
 import {isUndelegated} from './undelegated.js';
 
 const encoder = new TextEncoder();
+
+/** Types refused locally with NODATA (see config.ts). */
+const BLOCKED_TYPES = new Set<number>([
+  ...(BLOCK_ANY ? [255] : []),
+  ...(BLOCK_AAAA ? [TYPE_AAAA] : []),
+  ...(BLOCK_PTR ? [12] : []),
+  ...(BLOCK_HTTPS ? [TYPE_HTTPS] : []),
+]);
 
 /**
  * Sends a query to the upstream resolver.
@@ -200,6 +213,10 @@ export async function resolve(
     return {body: respond(q, 3, []), ttl: 3600};
   }
 
+  if (BLOCKED_TYPES.has(q.type)) {
+    return {body: respond(q, 0, []), ttl: 3600};
+  }
+
   const target = REDIRECTS[q.name];
   if (target && (q.type === TYPE_SVCB || q.type === TYPE_HTTPS)) {
     // Service hints would reveal the original IPs: answer NODATA.
@@ -219,7 +236,11 @@ export async function resolve(
     return cached;
   }
 
-  const result = await coalesce(key, q, () => askUpstream(q, env, ecs, flags));
+  const result = await coalesce(key, q, async () =>
+    addEch(q, await askUpstream(q, env, ecs, flags), ecs, wire =>
+      forward(env, wire)
+    )
+  );
   store(cache, key, result, waitUntil);
   return result;
 }

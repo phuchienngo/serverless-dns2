@@ -6,7 +6,7 @@
 
 import {MAX_DNS_PARAM, MAX_QUERY, RECORD_TYPES} from './config.js';
 import {encodeName, lowerAscii, parseQuestion, respond, u16} from './dns.js';
-import {parseEcsParam} from './ecs.js';
+import {clientEcs, parseEcsParam, reverseName} from './ecs.js';
 import {toJson} from './format.js';
 import {resolve} from './resolve.js';
 import type {Context, Question, ResolveOptions, Result} from './types.js';
@@ -97,8 +97,15 @@ export async function handle(
     return textResponse('bad dns message', 400);
   }
 
+  // Honour a subnet the client chose itself; an empty one (privacy signal)
+  // is ignored, so the connecting IP is used.
+  const ecs = clientEcs(wire, question.raw.length);
+  const options: ResolveOptions = {...ctx, host: url.hostname};
+  if (ecs) {
+    options.ecs = ecs;
+  }
   try {
-    return wireResponse(await resolve(question, {...ctx, host: url.hostname}));
+    return wireResponse(await resolve(question, options));
   } catch {
     return wireResponse({body: respond(question, 2, []), ttl: 5}); // SERVFAIL.
   }
@@ -159,13 +166,17 @@ export async function handleJson(
     return textResponse('not implemented', 501, {allow: 'GET'});
   }
 
-  const name = params.get('name') || '';
-  if (!isValidName(name)) {
-    return textResponse('invalid name', 400);
-  }
+  let name = params.get('name') || '';
   const type = parseType(params.get('type'));
   if (Number.isNaN(type)) {
     return textResponse('invalid type', 400);
+  }
+  // PTR/NAPTR for an IP address: look up its reverse-DNS name instead.
+  if (type === 12 || type === 35) {
+    name = reverseName(name.replace(/\.$/, '')) ?? name;
+  }
+  if (!isValidName(name)) {
+    return textResponse('invalid name', 400);
   }
 
   const options: ResolveOptions = {
