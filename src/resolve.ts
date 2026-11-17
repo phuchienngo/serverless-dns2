@@ -217,7 +217,7 @@ export async function resolve(
   }
 
   if (BLOCKLIST_ENABLED) {
-    const blocklist = await getBlocklist(env, host);
+    const blocklist = await getBlocklist(env, host, options.timing);
     if (blocklist && isBlocked(blocklist, q.name)) {
       return {body: respond(q, 3, []), ttl: 300}; // NXDOMAIN.
     }

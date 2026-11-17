@@ -40,4 +40,6 @@ export interface ResolveOptions extends Context {
   ecs?: number[] | null;
   dnssec?: boolean;
   cd?: boolean;
+  /** Filled with durations in ms (see `serverTiming`). */
+  timing?: Record<string, number>;
 }

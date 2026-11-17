@@ -20,15 +20,31 @@ function textResponse(
 }
 
 /**
+ * @return A Server-Timing header value for the durations in `timing`.
+ */
+function formatTiming(timing?: Record<string, number>): string {
+  return Object.entries(timing ?? {})
+    .map(([name, ms]) => `${name};dur=${ms.toFixed(1)}`)
+    .join(', ');
+}
+
+/**
  * @return A `application/dns-message` response.
  */
-function wireResponse(result: Result): Response {
+function wireResponse(
+  result: Result,
+  timing?: Record<string, number>
+): Response {
   const headers: Record<string, string> = {
     'content-type': 'application/dns-message',
     'cache-control': `private, max-age=${result.ttl}`,
   };
   if (result.hit) {
     headers['x-cache'] = 'HIT';
+  }
+  const serverTiming = formatTiming(timing);
+  if (serverTiming) {
+    headers['server-timing'] = serverTiming;
   }
   return new Response(result.body, {headers});
 }
@@ -100,12 +116,13 @@ export async function handle(
   // Honour a subnet the client chose itself; an empty one (privacy signal)
   // is ignored, so the connecting IP is used.
   const ecs = clientEcs(wire, question.raw.length);
-  const options: ResolveOptions = {...ctx, host: url.hostname};
+  const timing: Record<string, number> = {};
+  const options: ResolveOptions = {...ctx, host: url.hostname, timing};
   if (ecs) {
     options.ecs = ecs;
   }
   try {
-    return wireResponse(await resolve(question, options));
+    return wireResponse(await resolve(question, options), timing);
   } catch {
     return wireResponse({body: respond(question, 2, []), ttl: 5}); // SERVFAIL.
   }
@@ -184,6 +201,7 @@ export async function handleJson(
     host: url.hostname,
     dnssec: flag(params, 'do'),
     cd: flag(params, 'cd'),
+    timing: {},
   };
   const subnet = params.get('edns_client_subnet');
   if (subnet) {
@@ -207,7 +225,7 @@ export async function handleJson(
     result = {body: respond(question, 2, []), ttl: 5}; // SERVFAIL.
   }
   if (params.get('ct') === 'application/dns-message') {
-    return wireResponse(result);
+    return wireResponse(result, options.timing);
   }
 
   let json;
@@ -229,6 +247,10 @@ export async function handleJson(
     'content-type': 'application/json; charset=UTF-8',
     'cache-control': `private, max-age=${result.ttl}`,
   };
+  const serverTiming = formatTiming(options.timing);
+  if (serverTiming) {
+    headers['server-timing'] = serverTiming;
+  }
   if (result.hit) {
     headers['x-cache'] = 'HIT';
   }
