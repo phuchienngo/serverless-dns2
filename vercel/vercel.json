@@ -1,5 +1,0 @@
-{
-  "regions": ["hkg1"],
-  "functions": { "api/dns-query.go": { "maxDuration": 10 } },
-  "rewrites": [{ "source": "/dns-query", "destination": "/api/dns-query" }]
-}
