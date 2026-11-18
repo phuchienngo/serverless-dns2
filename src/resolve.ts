@@ -1,192 +1,26 @@
 /**
- * @fileoverview Resolves one question: DDR, CDN redirects, edge cache and the
- * upstream resolver. Shared by the `/dns-query` and `/resolve` endpoints.
+ * @fileoverview Resolves one question: local answers, blocking, the caches and
+ * the upstream resolver. Shared by the `/dns-query` and `/resolve` endpoints.
  */
 
 import {lookupLocal, lookupShared, store} from './cache.js';
+import {blockReason, nxdomain, uncloak} from './blocking.js';
+import {getBlocklist, isReady} from './blocklist.js';
+import {BLOCKLIST_ENABLED, ECS_ENABLED} from './config.js';
+import {EDE_STALE_ANSWER, OPTION_ECS} from './constants.js';
 import {
-  BLOCKLIST_ENABLED,
-  BLOCK_AAAA,
-  BLOCK_ANY,
-  BLOCK_HTTPS,
-  BLOCK_PTR,
-  BLOCK_UNDELEGATED,
-  CNAME_UNCLOAK,
-  ECS_ENABLED,
-  REDIRECTS,
-  HEDGE_MAX_MS,
-  HEDGE_MIN_MS,
-  UPSTREAM,
-  UPSTREAM_BACKUP,
-  UPSTREAM_TIMEOUT_MS,
-} from './config.js';
-import {
-  EDE_BLOCKED,
-  EDE_STALE_ANSWER,
-  OPTION_ECS,
-  RCODE_BADVERS,
-  RCODE_FORMERR,
-  RCODE_NOERROR,
-  RCODE_NOTIMP,
-  RCODE_NXDOMAIN,
-  RCODE_REFUSED,
-  TTL_BLOCKED,
-  TTL_DDR,
-  TTL_LOCAL,
-  TTL_SHORT,
-  TYPES_FORMERR,
-  TYPES_NOTIMP,
-  TYPE_A,
-  TYPE_AAAA,
-  TYPE_ANY,
-  TYPE_HINFO,
-  TYPE_HTTPS,
-  TYPE_SVCB,
-  CLASS_IN,
-} from './constants.js';
-import {
-  buildQuery,
-  cnameTargets,
   addOptOption,
   copyRd,
   edeOption,
-  encodeName,
-  makeRecord,
   padResponse,
-  QUESTION_POINTER,
   removeOptOption,
-  minTtl,
-  parseAnswers,
-  respond,
-  respondNegative,
   stripOpt,
-  u16,
 } from './dns.js';
-import {getBlocklist, isReady, peekBlocklist, peekRules} from './blocklist.js';
 import {addEch, startEchProbe} from './ech.js';
 import {makeEcs} from './ecs.js';
-import type {Env, Question, ResolveOptions, Result} from './types.js';
-import {isBlocked} from './blockset.js';
-import {isUndelegated} from './undelegated.js';
-
-const encoder = new TextEncoder();
-
-const FORMERR_TYPES = new Set(TYPES_FORMERR);
-const NOTIMP_TYPES = new Set(TYPES_NOTIMP);
-
-/** Types refused locally with NODATA (see config.ts). */
-const BLOCKED_TYPES = new Set<number>([
-  ...(BLOCK_ANY ? [TYPE_ANY] : []),
-  ...(BLOCK_AAAA ? [TYPE_AAAA] : []),
-  ...(BLOCK_PTR ? [12] : []),
-  ...(BLOCK_HTTPS ? [TYPE_HTTPS] : []),
-]);
-
-/**
- * Sends a query to one DoH resolver.
- */
-async function post(
-  url: string,
-  wire: Uint8Array,
-  controller: AbortController
-): Promise<Uint8Array> {
-  const timer = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/dns-message',
-        accept: 'application/dns-message',
-      },
-      body: wire,
-      signal: controller.signal,
-    });
-    if (!response.ok) {
-      throw new Error(`upstream ${response.status}`);
-    }
-    const body = new Uint8Array(await response.arrayBuffer());
-    if (body.length < 12) {
-      throw new Error('short upstream response');
-    }
-    return body;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/** Recent upstream latency in ms (moving average), for the hedge delay. */
-let latencyAverage = 30;
-
-/**
- * Sends a query to the upstream resolver. If it has not answered after about
- * three times its recent latency, the query is also sent on a second
- * connection (to UPSTREAM_BACKUP if set), and the first answer wins.
- */
-async function forward(env: Env, wire: Uint8Array): Promise<Uint8Array> {
-  const controllers = [new AbortController(), new AbortController()];
-  const delay = Math.min(
-    HEDGE_MAX_MS,
-    Math.max(HEDGE_MIN_MS, 3 * latencyAverage)
-  );
-  const started = performance.now();
-  let done = false;
-  const hedge = async () => {
-    await new Promise(resolve => setTimeout(resolve, delay));
-    if (done) {
-      throw new Error('not needed');
-    }
-    return post(UPSTREAM_BACKUP || UPSTREAM, wire, controllers[1]);
-  };
-  try {
-    const body = await Promise.any([
-      post(UPSTREAM, wire, controllers[0]),
-      hedge(),
-    ]);
-    const elapsed = Math.min(performance.now() - started, 300);
-    latencyAverage = 0.8 * latencyAverage + 0.2 * elapsed;
-    return body;
-  } finally {
-    done = true;
-    controllers.forEach(c => c.abort()); // Cancel the loser.
-  }
-}
-
-/**
- * Answers the original question with only the A/AAAA records of `resp`.
- * @param resp Upstream response for the redirect target.
- * @param q The question the client asked.
- */
-function redirected(resp: Uint8Array, q: Question): Result {
-  const rcode = resp[3] & 15;
-  const records = parseAnswers(resp)
-    .filter(a => a.type === TYPE_A || a.type === TYPE_AAAA)
-    .map(a => [
-      ...QUESTION_POINTER,
-      ...resp.subarray(a.start, a.start + 10 + a.length),
-    ]);
-  return {body: respond(q, rcode, records), ttl: minTtl(resp)};
-}
-
-/**
- * Builds the Discovery of Designated Resolvers answer (RFC 9462).
- * @param host This gateway's hostname.
- */
-function ddrAnswer(q: Question, host: string): Uint8Array {
-  const alpn = [0, 1, 0, 6, 2, 104, 50, 2, 104, 51]; // Key 1: "h2", "h3".
-  const path = encoder.encode('/dns-query{?dns}');
-  const rdata = [
-    0,
-    1, // Priority 1.
-    ...encodeName(host),
-    ...alpn,
-    0,
-    7,
-    ...u16(path.length),
-    ...path, // Key 7: dohpath.
-  ];
-  const record = makeRecord(TYPE_SVCB, TTL_DDR, rdata);
-  return respond(q, RCODE_NOERROR, [record]);
-}
+import {localAnswer, typeAnswer} from './local.js';
+import type {Question, ResolveOptions, Result} from './types.js';
+import {askUpstream, coalesce, forward} from './upstream.js';
 
 /**
  * Cache key: name, type, client subnet and DNSSEC flags.
@@ -204,66 +38,6 @@ function cacheKey(
   const flags = `${+dnssec}${+cd}${+ad}`;
   const name = encodeURIComponent(q.name);
   return `https://${host}/__cache/${name}/${q.type}/${subnet}/${flags}`;
-}
-
-/**
- * Asks the upstream resolver, following a CDN redirect if one applies.
- */
-async function askUpstream(
-  q: Question,
-  env: Env,
-  ecs: number[] | null,
-  flags: {dnssec: boolean; cd: boolean; ad: boolean}
-): Promise<Result> {
-  const target = REDIRECTS[q.name];
-  if (target && (q.type === TYPE_A || q.type === TYPE_AAAA)) {
-    const question = [...encodeName(target), ...u16(q.type), 0, 1];
-    const resp = await forward(env, buildQuery(question, ecs, flags));
-    return redirected(resp, q);
-  }
-  const body = await forward(env, buildQuery(q.raw, ecs, flags));
-  body.set(u16(q.id), 0);
-  return {body, ttl: minTtl(body)};
-}
-
-/** Queries in flight, so identical concurrent ones share one upstream call. */
-const pending = new Map<string, Promise<Result>>();
-
-/**
- * Copies a result for another client's question (same name, other id/case).
- */
-function retarget({body, ttl}: Result, q: Question): Result {
-  const copy = body.slice();
-  copy.set(u16(q.id), 0);
-  copy.set(q.raw, 12);
-  return {body: copy, ttl};
-}
-
-/**
- * Runs `task` once per `key` at a time: concurrent callers share its result.
- */
-async function coalesce(
-  key: string,
-  q: Question,
-  task: () => Promise<Result>
-): Promise<Result> {
-  const joined = pending.get(key);
-  if (joined) {
-    try {
-      return retarget(await joined, q);
-    } catch {
-      // The other request failed; fall through and try on our own.
-    }
-  }
-  const own = task();
-  pending.set(key, own);
-  const done = () => {
-    if (pending.get(key) === own) {
-      pending.delete(key);
-    }
-  };
-  own.then(done, done);
-  return own;
 }
 
 /**
@@ -295,152 +69,33 @@ export async function resolve(
   return {...result, body};
 }
 
-/** An error response with no records, which clients should not cache. */
-function error(q: Question, rcode: number): Result {
-  return {body: respond(q, rcode, []), ttl: 0};
-}
-
-/**
- * @return The response code for a question that must not be resolved, or null.
- */
-function refuseQuestion(q: Question): number | null {
-  if (q.malformed) {
-    return RCODE_FORMERR; // RFC 6891 6.1.1.
-  }
-  if (q.opcode !== 0) {
-    return RCODE_NOTIMP;
-  }
-  if (q.ednsVersion > 0) {
-    return RCODE_BADVERS; // RFC 6891 6.1.3.
-  }
-  if (FORMERR_TYPES.has(q.type)) {
-    return RCODE_FORMERR;
-  }
-  if (NOTIMP_TYPES.has(q.type)) {
-    return RCODE_NOTIMP;
-  }
-  const [classHigh, classLow] = q.raw.slice(-2);
-  if (((classHigh << 8) | classLow) !== CLASS_IN) {
-    return RCODE_REFUSED; // The cache key has no class: serve IN only.
-  }
-  return null;
-}
-
-/** RFC 6761: localhost names are the loopback address. */
-function localhost(q: Question): Result {
-  const address =
-    q.type === TYPE_A
-      ? [makeRecord(TYPE_A, TTL_LOCAL, [127, 0, 0, 1])]
-      : q.type === TYPE_AAAA
-        ? [makeRecord(TYPE_AAAA, TTL_LOCAL, [...new Array(15).fill(0), 1])]
-        : [];
-  return {
-    body: address.length
-      ? respond(q, RCODE_NOERROR, address)
-      : respondNegative(q, RCODE_NOERROR, TTL_LOCAL),
-    ttl: TTL_LOCAL,
-  };
-}
-
 async function resolveQuestion(
   q: Question,
   options: ResolveOptions
 ): Promise<Result> {
   const {env, host} = options;
 
-  // Queries that cannot or will not be answered (RFC 1035, 6891, 6895, 5936).
-  const refusal = refuseQuestion(q);
-  if (refusal !== null) {
-    return error(q, refusal);
+  const special = localAnswer(q, host);
+  if (special) {
+    return special;
+  }
+  if (!BLOCKLIST_ENABLED) {
+    return answer(q, options);
   }
 
-  const isDdr =
-    q.type === TYPE_SVCB &&
-    (q.name === '_dns.resolver.arpa' || q.name === `_dns.${host}`);
-  if (isDdr) {
-    return {body: ddrAnswer(q, host), ttl: TTL_DDR};
-  }
-  if (q.name === 'resolver.arpa' || q.name.endsWith('.resolver.arpa')) {
-    // RFC 9462: reserved for DDR; never forwarded.
-    return {body: respondNegative(q, RCODE_NOERROR, TTL_DDR), ttl: TTL_DDR};
-  }
-  if (q.name === 'localhost' || q.name.endsWith('.localhost')) {
-    return localhost(q);
-  }
-  if (BLOCK_UNDELEGATED && isUndelegated(q.name)) {
-    return {
-      body: respondNegative(q, RCODE_NXDOMAIN, TTL_LOCAL),
-      ttl: TTL_LOCAL,
-    };
-  }
-
-  if (BLOCKLIST_ENABLED) {
-    if (!isReady()) {
-      // This isolate has not loaded the blocklist yet. Start answering while
-      // it loads, and discard the answer if the name turns out to be listed.
-      const loading = getBlocklist(env, host, options.timing);
-      const answering = answer(q, options);
-      answering.catch(() => {});
-      await loading;
-      const reason = blockReason(q.name);
-      if (reason) {
-        return nxdomain(q, reason);
-      }
-      return uncloak(q, await answering);
-    }
+  if (isReady()) {
     const reason = blockReason(q.name);
-    if (reason) {
-      return nxdomain(q, reason);
-    }
-    return uncloak(q, await answer(q, options));
+    return reason ? nxdomain(q, reason) : uncloak(q, await answer(q, options));
   }
 
-  return answer(q, options);
-}
-
-/**
- * @return Why the name is blocked, or null if it is not: an allow rule wins,
- *     then the blocklist (name or a parent domain) and the regex block rules.
- */
-function blockReason(name: string): string | null {
-  const {block, allow} = peekRules();
-  if (allow?.test(name)) {
-    return null;
-  }
-  const hashes = peekBlocklist();
-  if (hashes && isBlocked(hashes, name)) {
-    return 'blocklist';
-  }
-  return block?.test(name) ? 'regex rule' : null;
-}
-
-/** NXDOMAIN with an Extended DNS Error saying the name was blocked. */
-function nxdomain(q: Question, reason: string): Result {
-  return {
-    body: respondNegative(q, RCODE_NXDOMAIN, TTL_BLOCKED, {
-      code: EDE_BLOCKED,
-      text: reason,
-    }),
-    ttl: TTL_BLOCKED,
-  };
-}
-
-/**
- * CNAME uncloaking: if any CNAME target in the answer is blocked, the name is
- * a tracker hiding behind a first-party subdomain, so answer NXDOMAIN.
- * Checked on every response (a few lookups) rather than stored in the cache,
- * so newer rules apply to cached answers too.
- */
-function uncloak(q: Question, result: Result): Result {
-  if (!CNAME_UNCLOAK || peekRules().allow?.test(q.name)) {
-    return result;
-  }
-  for (const target of cnameTargets(result.body)) {
-    if (blockReason(target)) {
-      return nxdomain(q, `CNAME target ${target} is blocked`);
-    }
-  }
-  return result;
+  // This isolate has not loaded the blocklist yet. Start answering while it
+  // loads, and discard the answer if the name turns out to be listed.
+  const loading = getBlocklist(env, host, options.timing);
+  const answering = answer(q, options);
+  answering.catch(() => {});
+  await loading;
+  const reason = blockReason(q.name);
+  return reason ? nxdomain(q, reason) : uncloak(q, await answering);
 }
 
 /**
@@ -455,27 +110,9 @@ async function answer(q: Question, options: ResolveOptions): Promise<Result> {
     ad: !!options.ad,
   };
 
-  if (BLOCKED_TYPES.has(q.type)) {
-    if (q.type === TYPE_ANY) {
-      // RFC 8482: a minimal HINFO answer.
-      const text = [...encoder.encode('RFC8482')];
-      const hinfo = makeRecord(TYPE_HINFO, TTL_LOCAL, [
-        text.length,
-        ...text,
-        0,
-      ]);
-      return {body: respond(q, RCODE_NOERROR, [hinfo]), ttl: TTL_LOCAL};
-    }
-    return {
-      body: respondNegative(q, RCODE_NOERROR, TTL_LOCAL),
-      ttl: TTL_LOCAL,
-    };
-  }
-
-  const target = REDIRECTS[q.name];
-  if (target && (q.type === TYPE_SVCB || q.type === TYPE_HTTPS)) {
-    // Service hints would reveal the original IPs: answer NODATA.
-    return {body: respondNegative(q, RCODE_NOERROR, TTL_SHORT), ttl: TTL_SHORT};
+  const typed = typeAnswer(q);
+  if (typed) {
+    return typed;
   }
 
   let ecs = null;
