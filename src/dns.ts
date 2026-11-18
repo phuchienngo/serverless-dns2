@@ -17,6 +17,7 @@ const encoder = new TextEncoder();
 
 /** Header flag bits: in byte 2 (RD) and byte 3 (CD, AD) of a message. */
 const FLAG_RD = 0x01;
+const RCODE_MASK = 0x0f;
 const FLAG_AD = 0x20;
 const FLAG_CD = 0x10;
 const FLAG_QR_OR_RA = 0x80;
@@ -24,7 +25,7 @@ const FLAG_QR_OR_RA = 0x80;
 const FLAG_DO = 0x8000;
 
 /** Size of the header, and of a record's TYPE, CLASS, TTL and RDLENGTH. */
-const HEADER_BYTES = 12;
+export const HEADER_BYTES = 12;
 export const RECORD_FIXED_BYTES = 10;
 /** Largest wire length of a name (RFC 1035 2.3.4). */
 const MAX_NAME_BYTES = 255;
@@ -146,7 +147,9 @@ export interface DnsRecord {
   start: number;
   type: number;
   ttl: number;
-  /** RDLENGTH. The RDATA starts at `start + 10`. */
+  /** Offset of the RDATA. */
+  data: number;
+  /** RDLENGTH. */
   length: number;
   /** Offset of the first byte after the record. */
   end: number;
@@ -184,6 +187,7 @@ export function readRecords(resp: Uint8Array): DnsRecord[] {
         start,
         type: view.getUint16(start),
         ttl: view.getUint32(start + 4),
+        data: start + RECORD_FIXED_BYTES,
         length,
         end,
       });
@@ -238,7 +242,7 @@ function readOptions(
   opt: DnsRecord
 ): {options: OptOption[]; exact: boolean} {
   const options: OptOption[] = [];
-  let at = opt.start + RECORD_FIXED_BYTES;
+  let at = opt.data;
   while (at + 4 <= opt.end) {
     const end = at + 4 + view.getUint16(at + 2);
     options.push({code: view.getUint16(at), start: at, end});
@@ -340,20 +344,58 @@ export function parseQuestion(buf: Uint8Array): Question {
   };
 }
 
+/** @return The response code of a message, without the bits held in OPT. */
+export function rcodeOf(resp: Uint8Array): number {
+  return resp[3] & RCODE_MASK;
+}
+
+/**
+ * @param protocols ALPN ids, such as `h2`.
+ * @return The value of an `alpn` SvcParam: each id preceded by its length.
+ */
+export function alpnValue(protocols: string[]): number[] {
+  return protocols.flatMap(p => [p.length, ...encoder.encode(p)]);
+}
+
+/**
+ * Builds the RDATA of an SVCB or HTTPS record in service mode (RFC 9460).
+ * @param target Target name; `.` means the owner name itself.
+ * @param params SvcParams as [key, value]; written in increasing key order,
+ *     as the RFC requires.
+ */
+export function svcbRdata(
+  priority: number,
+  target: string,
+  params: Array<[number, number[]]>
+): number[] {
+  return [
+    ...u16(priority),
+    ...encodeName(target),
+    ...[...params]
+      .sort(([a], [b]) => a - b)
+      .flatMap(([key, value]) => [...u16(key), ...u16(value.length), ...value]),
+  ];
+}
+
 /**
  * Makes the question of a query that did not arrive as a DNS message (the
  * JSON API): recursion desired, no EDNS.
+ * @param flags DNSSEC flags to ask the upstream with (DO and CD).
  * @param name A domain name, with or without a trailing dot.
  */
-export function makeQuestion(name: string, type: number): Question {
+export function makeQuestion(
+  name: string,
+  type: number,
+  flags: {dnssecOk?: boolean; cd?: boolean} = {}
+): Question {
   return {
     id: 0,
     name: lowerAscii(name.replace(/\.$/, '')),
     type,
     raw: [...encodeName(name), ...u16(type), ...u16(CLASS_IN)],
     edns: false,
-    dnssecOk: false,
-    cd: false,
+    dnssecOk: flags.dnssecOk ?? false,
+    cd: flags.cd ?? false,
     ad: false,
     rd: true,
     opcode: 0,
@@ -487,7 +529,7 @@ function build(
   const header = [
     ...u16(q.id),
     FLAG_QR_OR_RA | (q.opcode << 3) | (q.rd ? FLAG_RD : 0), // QR, opcode, RD as asked.
-    FLAG_QR_OR_RA | (q.cd ? FLAG_CD : 0) | (rcode & 15), // RA, CD as asked, rcode.
+    FLAG_QR_OR_RA | (q.cd ? FLAG_CD : 0) | (rcode & RCODE_MASK), // RA, CD as asked, rcode.
     0,
     1, // One question.
     ...u16(answers.length),
@@ -655,11 +697,7 @@ export function cnameTargets(resp: Uint8Array): string[] {
   try {
     return parseAnswers(resp)
       .filter(a => a.type === TYPE_CNAME)
-      .map(a =>
-        lowerAscii(
-          readName(resp, a.start + RECORD_FIXED_BYTES).name.replace(/\.$/, '')
-        )
-      );
+      .map(a => lowerAscii(readName(resp, a.data).name.replace(/\.$/, '')));
   } catch {
     return [];
   }

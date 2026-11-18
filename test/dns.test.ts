@@ -16,7 +16,10 @@ import {
   lowerAscii,
   minTtl,
   padResponse,
+  alpnValue,
   makeQuestion,
+  rcodeOf,
+  svcbRdata,
   makeRecord,
   parseAdditional,
   readRecords,
@@ -651,5 +654,78 @@ describe('makeRecord and makeQuestion', () => {
       ).name,
       'www.example.com'
     );
+  });
+});
+
+describe('SVCB helpers (RFC 9460)', () => {
+  test('alpnValue prefixes every id with its length', () => {
+    assert.deepEqual(alpnValue(['h2', 'h3']), [2, 104, 50, 2, 104, 51]);
+    assert.deepEqual(alpnValue([]), []);
+  });
+
+  test('svcbRdata writes priority, target and params in increasing key order', () => {
+    const rdata = svcbRdata(1, '.', [
+      [7, [9]],
+      [1, alpnValue(['h2'])],
+      [5, [1, 2]],
+    ]);
+    assert.deepEqual(rdata, [
+      0,
+      1, // priority
+      0, // target "."
+      0,
+      1,
+      0,
+      3,
+      2,
+      104,
+      50, // alpn
+      0,
+      5,
+      0,
+      2,
+      1,
+      2, // ech
+      0,
+      7,
+      0,
+      1,
+      9, // dohpath
+    ]);
+  });
+
+  test('a named target is written as a name', () => {
+    assert.deepEqual(svcbRdata(16, 'a.b', []), [0, 16, 1, 97, 1, 98, 0]);
+  });
+});
+
+describe('message helpers', () => {
+  test('rcodeOf reads the low four bits only', () => {
+    const body = makeResponse({qname: 'a.test', qtype: T.A, rcode: 3});
+    assert.equal(rcodeOf(body), 3);
+    const extended = Uint8Array.from(body);
+    extended[3] |= 0xf0; // Flag bits above the rcode.
+    assert.equal(rcodeOf(extended), 3);
+  });
+
+  test('records know where their data is', () => {
+    const body = makeResponse({
+      qname: 'a.test',
+      qtype: T.A,
+      answer: [{type: T.A, ttl: 5, rdata: ip4('9.8.7.6')}],
+    });
+    const [record] = readRecords(body);
+    assert.deepEqual(
+      [...body.subarray(record.data, record.end)],
+      ip4('9.8.7.6')
+    );
+  });
+
+  test('makeQuestion carries the DNSSEC flags it is given', () => {
+    const question = makeQuestion('a.test', T.A, {dnssecOk: true, cd: true});
+    assert.equal(question.dnssecOk, true);
+    assert.equal(question.cd, true);
+    assert.equal(question.ad, false);
+    assert.equal(makeQuestion('a.test', T.A).dnssecOk, false);
   });
 });

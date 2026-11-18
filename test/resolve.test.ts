@@ -315,7 +315,7 @@ describe('forwarding to the upstream', () => {
     assert.equal(upstream.calls[0].query.opt?.do, false);
     assert.equal(plain.msg.answer.length, 1);
 
-    const signed = await ask(name, T.A, {do: true}, {dnssec: true});
+    const signed = await ask(name, T.A, {do: true});
     assert.equal(upstream.calls[1].query.opt?.do, true);
     assert.deepEqual(
       signed.msg.answer.map(r => r.type),
@@ -326,12 +326,12 @@ describe('forwarding to the upstream', () => {
   });
 
   test('CD goes upstream (RFC 4035 3.2.2)', async () => {
-    await ask(fresh(), T.A, {cd: true}, {cd: true});
+    await ask(fresh(), T.A, {cd: true});
     assert.equal(upstream.calls[0].query.cd, true);
   });
 
   test('AD without DO goes upstream (RFC 6840 5.7)', async () => {
-    await ask(fresh(), T.A, {ad: true}, {ad: true});
+    await ask(fresh(), T.A, {ad: true});
     assert.equal(upstream.calls[0].query.ad, true);
     await ask(fresh(), T.A);
     assert.equal(upstream.calls[1].query.ad, false);
@@ -340,11 +340,11 @@ describe('forwarding to the upstream', () => {
   test('answers for different DNSSEC flags are cached apart', async () => {
     const name = fresh();
     await ask(name, T.A);
-    await ask(name, T.A, {}, {dnssec: true});
-    await ask(name, T.A, {}, {cd: true});
-    await ask(name, T.A, {}, {ad: true});
+    await ask(name, T.A, {do: true});
+    await ask(name, T.A, {cd: true});
+    await ask(name, T.A, {ad: true});
     assert.equal(upstream.calls.length, 4);
-    await ask(name, T.A, {}, {dnssec: true});
+    await ask(name, T.A, {do: true});
     assert.equal(upstream.calls.length, 4, 'the same flags hit the cache');
   });
 
@@ -685,12 +685,7 @@ describe('best-effort ECH for Cloudflare-hosted names', () => {
 
   test('is not done for a client that asks for DNSSEC records (the record would be unsigned)', async () => {
     cloudflareUpstream();
-    const {msg} = await ask(
-      'cf-signed.example.com',
-      T.HTTPS,
-      {do: true},
-      {dnssec: true}
-    );
+    const {msg} = await ask('cf-signed.example.com', T.HTTPS, {do: true});
     assert.equal(msg.answer.length, 0);
     assert.equal(
       upstream.calls.filter(c => c.query.question[0].type === T.A).length,

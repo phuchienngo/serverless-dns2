@@ -24,10 +24,10 @@ import {
   makeQuestion,
   makeRecord,
   parseAnswers,
-  RECORD_FIXED_BYTES,
   copyRd,
   edeOption,
   padResponse,
+  rcodeOf,
   removeOptOption,
   respond,
   stripOpt,
@@ -36,21 +36,15 @@ import {addEch, startEchProbe} from './ech.js';
 import {makeEcs} from './ecs.js';
 import {ddrAnswer, isDdr, localAnswer, typeAnswer} from './local.js';
 import type {Question, ResolveOptions, Result} from './types.js';
-import {askUpstream, coalesce, forward} from './upstream.js';
+import {askUpstream, coalesce, forward, queryFlags} from './upstream.js';
 
 /**
  * Cache key: name, type, client subnet and DNSSEC flags.
  * @return A URL, as the Cache API only accepts requests as keys.
  */
-function cacheKey(
-  host: string,
-  q: Question,
-  ecs: number[] | null,
-  dnssec: boolean,
-  cd: boolean,
-  ad: boolean
-): string {
+function cacheKey(host: string, q: Question, ecs: number[] | null): string {
   const subnet = ecs ? ecs.slice(4).join('-') : 'none';
+  const {dnssec, cd, ad} = queryFlags(q);
   const flags = `${+dnssec}${+cd}${+ad}`;
   const name = encodeURIComponent(q.name);
   return `https://${host}/__cache/${name}/${q.type}/${subnet}/${flags}`;
@@ -81,11 +75,10 @@ async function ddrResult(
     return parseAnswers(body)
       .filter(r => r.type === TYPE_A || r.type === TYPE_AAAA)
       .map(r => {
-        const data = r.start + RECORD_FIXED_BYTES;
         return makeRecord(
           r.type,
           Math.min(r.ttl, TTL_DDR),
-          [...body.subarray(data, data + r.length)],
+          [...body.subarray(r.data, r.end)],
           owner
         );
       });
@@ -113,7 +106,7 @@ export async function resolve(
     body = stripOpt(body);
   } else {
     if (result.stale) {
-      const nxdomain = (body[3] & 15) === RCODE_NXDOMAIN;
+      const nxdomain = rcodeOf(body) === RCODE_NXDOMAIN;
       const code = nxdomain ? EDE_STALE_NXDOMAIN : EDE_STALE_ANSWER;
       body = addOptOption(body, edeOption(code, ''));
     }
@@ -162,11 +155,7 @@ async function resolveQuestion(
  */
 async function answer(q: Question, options: ResolveOptions): Promise<Result> {
   const {env, host, cache, waitUntil} = options;
-  const flags = {
-    dnssec: !!options.dnssec,
-    cd: !!options.cd,
-    ad: !!options.ad,
-  };
+  const flags = queryFlags(q);
 
   const typed = typeAnswer(q);
   if (typed) {
@@ -180,7 +169,7 @@ async function answer(q: Question, options: ResolveOptions): Promise<Result> {
     ecs = makeEcs(options.ip);
   }
 
-  const key = cacheKey(host, q, ecs, flags.dnssec, flags.cd, flags.ad);
+  const key = cacheKey(host, q, ecs);
   const fetchFresh = async () => {
     const result = await coalesce(key, q, async () => {
       // ECH replaces the HTTPS record with an unsigned one, which a client that

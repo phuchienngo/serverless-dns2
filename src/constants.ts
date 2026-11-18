@@ -132,7 +132,13 @@ export const RCODE_BADVERS = 16;
 export const OPTION_ECS = 8; // RFC 7871.
 export const OPTION_PADDING = 12; // RFC 7830.
 export const OPTION_EDE = 15; // RFC 8914.
-export const ECH_PARAM = 5; // SvcParamKey `ech` (RFC 9460).
+
+/** SvcParamKeys (RFC 9460, 9461) and the ALPN ids of this gateway. */
+export const SVCPARAM_ALPN = 1;
+export const SVCPARAM_IPV4HINT = 4;
+export const SVCPARAM_ECH = 5;
+export const SVCPARAM_DOHPATH = 7;
+export const ALPN_HTTP = ['h2', 'h3'];
 
 /** Extended DNS Error info codes (RFC 8914) that are used. */
 export const EDE_STALE_ANSWER = 3;

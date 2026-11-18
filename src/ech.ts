@@ -6,14 +6,25 @@
  */
 
 import {ECH_ENABLED, ECH_FRONT_DOMAIN} from './config.js';
-import {ECH_PARAM, RCODE_NOERROR, TYPE_A, TYPE_HTTPS} from './constants.js';
 import {
+  ALPN_HTTP,
+  RCODE_NOERROR,
+  SVCPARAM_ALPN,
+  SVCPARAM_ECH,
+  SVCPARAM_IPV4HINT,
+  TYPE_A,
+  TYPE_HTTPS,
+} from './constants.js';
+import {
+  alpnValue,
   buildQuery,
   encodeName,
   makeRecord,
+  rcodeOf,
   parseAnswers,
   readName,
   respond,
+  svcbRdata,
   u16,
 } from './dns.js';
 import type {Question, Result} from './types.js';
@@ -37,7 +48,6 @@ const CLOUDFLARE_V4: Array<[string, number]> = [
   ['131.0.72.0', 22],
 ];
 
-const IPV4_HINT_PARAM = 4;
 const ECH_CONFIG_TTL_MS = 3600 * 1000;
 const SYNTHETIC_TTL = 300;
 
@@ -86,8 +96,8 @@ async function loadEchConfig(ask: Ask): Promise<Uint8Array | null> {
     if (a.type !== TYPE_HTTPS) {
       continue;
     }
-    const rdata = a.start + 10;
-    const value = svcParam(resp, rdata, rdata + a.length, ECH_PARAM);
+    const rdata = a.data;
+    const value = svcParam(resp, rdata, rdata + a.length, SVCPARAM_ECH);
     if (value) {
       echConfig = {value, expires: Date.now() + ECH_CONFIG_TTL_MS};
       return value;
@@ -122,7 +132,7 @@ async function behindCloudflare(
     a =>
       a.type === TYPE_A &&
       a.length === 4 &&
-      isCloudflare(resp.subarray(a.start + 10, a.start + 14))
+      isCloudflare(resp.subarray(a.data, a.data + 4))
   );
 }
 
@@ -165,7 +175,7 @@ export async function addEch(
   q: Question,
   probe: EchProbe | null
 ): Promise<Result> {
-  if (!probe || (result.body[3] & 15) !== 0) {
+  if (!probe || rcodeOf(result.body) !== RCODE_NOERROR) {
     return result;
   }
   try {
@@ -174,12 +184,12 @@ export async function addEch(
       if (a.type !== TYPE_HTTPS) {
         continue;
       }
-      const rdata = a.start + 10;
+      const rdata = a.data;
       const end = rdata + a.length;
-      if (svcParam(result.body, rdata, end, ECH_PARAM)) {
+      if (svcParam(result.body, rdata, end, SVCPARAM_ECH)) {
         return result; // Already has ECH.
       }
-      const hints = svcParam(result.body, rdata, end, IPV4_HINT_PARAM);
+      const hints = svcParam(result.body, rdata, end, SVCPARAM_IPV4HINT);
       for (let i = 0; hints && i + 4 <= hints.length; i += 4) {
         hinted = (hinted ?? false) || isCloudflare(hints.subarray(i, i + 4));
       }
@@ -191,24 +201,10 @@ export async function addEch(
     if (!config) {
       return result;
     }
-    const rdata = [
-      0,
-      1, // Priority 1 (service mode).
-      0, // Target: the name itself.
-      0,
-      1,
-      0,
-      6,
-      2,
-      104,
-      50,
-      2,
-      104,
-      51, // alpn: h2, h3.
-      ...u16(ECH_PARAM),
-      ...u16(config.length),
-      ...config,
-    ];
+    const rdata = svcbRdata(1, '.', [
+      [SVCPARAM_ALPN, alpnValue(ALPN_HTTP)],
+      [SVCPARAM_ECH, [...config]],
+    ]);
     const record = makeRecord(TYPE_HTTPS, SYNTHETIC_TTL, rdata);
     return {body: respond(q, RCODE_NOERROR, [record]), ttl: SYNTHETIC_TTL};
   } catch {

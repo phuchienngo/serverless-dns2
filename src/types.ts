@@ -55,10 +55,6 @@ export interface ResolveOptions extends Context {
   host: string;
   /** Overrides the subnet derived from `ip`; null sends none. */
   ecs?: number[] | null;
-  dnssec?: boolean;
-  cd?: boolean;
-  /** Ask for the AD flag even without DO (RFC 6840 5.7). */
-  ad?: boolean;
   /** Filled with durations in ms (see `serverTiming`). */
   timing?: Record<string, number>;
 }

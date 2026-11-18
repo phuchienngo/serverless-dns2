@@ -11,7 +11,14 @@ import {
   STALE_MAX_S,
   STALE_TTL,
 } from './config.js';
-import {parseAdditional, parseAnswers, parseAuthority, u16} from './dns.js';
+import {
+  HEADER_BYTES,
+  parseAdditional,
+  parseAnswers,
+  parseAuthority,
+  rcodeOf,
+  u16,
+} from './dns.js';
 import type {Question, Result} from './types.js';
 
 /** A cached response. `storedAt` is in milliseconds, `ttl` in seconds. */
@@ -88,7 +95,10 @@ function classify(entry: Entry, now: number): Freshness {
  */
 function serve(entry: Entry, q: Question, now: number): Hit | null {
   const freshness = classify(entry, now);
-  if (freshness === 'expired' || entry.body.length < 12 + q.raw.length) {
+  if (
+    freshness === 'expired' ||
+    entry.body.length < HEADER_BYTES + q.raw.length
+  ) {
     return null;
   }
   const body = entry.body.slice();
@@ -100,7 +110,7 @@ function serve(entry: Entry, q: Question, now: number): Hit | null {
           Math.ceil((entry.storedAt + entry.ttl * 1000 - now) / 1000)
         );
   body.set(u16(q.id), 0);
-  body.set(q.raw, 12); // Same length as stored; restores the client's case.
+  body.set(q.raw, HEADER_BYTES); // Same length as stored; restores the client's case.
   try {
     const view = new DataView(body.buffer);
     for (const record of [
@@ -168,7 +178,7 @@ export function store(
   {body, ttl}: Result,
   waitUntil?: (promise: Promise<unknown>) => void
 ): void {
-  const rcode = body[3] & 15;
+  const rcode = rcodeOf(body);
   const truncated = body[2] & 2;
   if ((rcode !== 0 && rcode !== 3) || truncated) {
     return;

@@ -13,6 +13,7 @@ import {
   REDIRECTS,
 } from './config.js';
 import {
+  ALPN_HTTP,
   CLASS_IN,
   RCODE_BADVERS,
   RCODE_FORMERR,
@@ -20,6 +21,8 @@ import {
   RCODE_NOTIMP,
   RCODE_NXDOMAIN,
   RCODE_REFUSED,
+  SVCPARAM_ALPN,
+  SVCPARAM_DOHPATH,
   TTL_DDR,
   TTL_LOCAL,
   TTL_SHORT,
@@ -33,7 +36,13 @@ import {
   TYPE_PTR,
   TYPE_SVCB,
 } from './constants.js';
-import {encodeName, makeRecord, respond, respondNegative, u16} from './dns.js';
+import {
+  alpnValue,
+  makeRecord,
+  respond,
+  respondNegative,
+  svcbRdata,
+} from './dns.js';
 import type {Question, Result} from './types.js';
 import {isUndelegated} from './undelegated.js';
 
@@ -59,18 +68,10 @@ export function ddrAnswer(
   host: string,
   hints: number[][] = []
 ): Uint8Array {
-  const alpn = [0, 1, 0, 6, 2, 104, 50, 2, 104, 51]; // Key 1: "h2", "h3".
-  const path = encoder.encode('/dns-query{?dns}');
-  const rdata = [
-    0,
-    1, // Priority 1.
-    ...encodeName(host),
-    ...alpn,
-    0,
-    7,
-    ...u16(path.length),
-    ...path, // Key 7: dohpath.
-  ];
+  const rdata = svcbRdata(1, host, [
+    [SVCPARAM_ALPN, alpnValue(ALPN_HTTP)],
+    [SVCPARAM_DOHPATH, [...encoder.encode('/dns-query{?dns}')]],
+  ]);
   const record = makeRecord(TYPE_SVCB, TTL_DDR, rdata);
   return respond(q, RCODE_NOERROR, [record], undefined, hints);
 }

@@ -15,9 +15,11 @@ import {TYPE_A, TYPE_AAAA} from './constants.js';
 import {
   buildQuery,
   encodeName,
+  HEADER_BYTES,
   minTtl,
   parseAnswers,
   QUESTION_POINTER,
+  rcodeOf,
   respond,
   u16,
 } from './dns.js';
@@ -46,7 +48,7 @@ async function post(
       throw new Error(`upstream ${response.status}`);
     }
     const body = new Uint8Array(await response.arrayBuffer());
-    if (body.length < 12) {
+    if (body.length < HEADER_BYTES) {
       throw new Error('short upstream response');
     }
     return body;
@@ -98,14 +100,26 @@ export async function forward(env: Env, wire: Uint8Array): Promise<Uint8Array> {
  * @param q The question the client asked.
  */
 function redirected(resp: Uint8Array, q: Question): Result {
-  const rcode = resp[3] & 15;
+  const rcode = rcodeOf(resp);
   const records = parseAnswers(resp)
     .filter(a => a.type === TYPE_A || a.type === TYPE_AAAA)
-    .map(a => [
-      ...QUESTION_POINTER,
-      ...resp.subarray(a.start, a.start + 10 + a.length),
-    ]);
+    .map(a => [...QUESTION_POINTER, ...resp.subarray(a.start, a.end)]);
   return {body: respond(q, rcode, records), ttl: minTtl(resp)};
+}
+
+/** The DNSSEC flags of a query to the upstream resolver. */
+export interface QueryFlags {
+  dnssec: boolean;
+  cd: boolean;
+  ad: boolean;
+}
+
+/**
+ * @return The flags to ask the upstream with: those of the client's question.
+ *     AD without DO asks for the AD flag only (RFC 6840 5.7).
+ */
+export function queryFlags(q: Question): QueryFlags {
+  return {dnssec: q.dnssecOk, cd: q.cd, ad: q.ad && !q.dnssecOk};
 }
 
 /**
@@ -115,7 +129,7 @@ export async function askUpstream(
   q: Question,
   env: Env,
   ecs: number[] | null,
-  flags: {dnssec: boolean; cd: boolean; ad: boolean}
+  flags: QueryFlags
 ): Promise<Result> {
   const target = REDIRECTS[q.name];
   if (target && (q.type === TYPE_A || q.type === TYPE_AAAA)) {
@@ -137,7 +151,7 @@ const pending = new Map<string, Promise<Result>>();
 function retarget({body, ttl}: Result, q: Question): Result {
   const copy = body.slice();
   copy.set(u16(q.id), 0);
-  copy.set(q.raw, 12);
+  copy.set(q.raw, HEADER_BYTES);
   return {body: copy, ttl};
 }
 

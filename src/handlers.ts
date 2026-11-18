@@ -116,9 +116,6 @@ export async function handle(
     ...ctx,
     host: url.hostname,
     timing,
-    dnssec: question.dnssecOk,
-    cd: question.cd,
-    ad: question.ad && !question.dnssecOk,
   };
   if (ecs) {
     options.ecs = ecs;
@@ -198,8 +195,6 @@ export async function handleJson(
   const options: ResolveOptions = {
     ...ctx,
     host: url.hostname,
-    dnssec: flag(params, 'do'),
-    cd: flag(params, 'cd'),
     timing: {},
   };
   const subnet = params.get('edns_client_subnet');
@@ -210,7 +205,10 @@ export async function handleJson(
     }
   }
 
-  const question = makeQuestion(name, type);
+  const question = makeQuestion(name, type, {
+    dnssecOk: flag(params, 'do'),
+    cd: flag(params, 'cd'),
+  });
 
   let result;
   try {
