@@ -5,18 +5,21 @@
 
 import assert from 'node:assert/strict';
 import {describe, test} from 'node:test';
+import {EDE_BLOCKED} from '../src/constants.js';
 import {
   addOptOption,
   buildQuery,
   cnameTargets,
   copyRd,
-  EDE_BLOCKED,
   edeOption,
   encodeName,
   lowerAscii,
   minTtl,
   padResponse,
+  makeQuestion,
+  makeRecord,
   parseAdditional,
+  readRecords,
   parseAnswers,
   removeOptOption,
   parseAuthority,
@@ -165,7 +168,9 @@ describe('parseQuestion (RFC 1035 4.1)', () => {
   test('ignores a damaged additional section (treated as no EDNS)', () => {
     const wire = Uint8Array.from(makeQuery('a.test', T.A, {edns: false}));
     wire[11] = 3; // ARCOUNT says 3 records, there are none
-    assert.equal(parseQuestion(wire).edns, false);
+    const parsed = parseQuestion(wire);
+    assert.equal(parsed.edns, false);
+    assert.equal(parsed.malformed, true, 'records that do not parse');
   });
 });
 
@@ -584,6 +589,67 @@ describe('parseAdditional', () => {
     assert.deepEqual(
       parseAdditional(body).map(r => [r.type, r.ttl]),
       [[T.A, 77]]
+    );
+  });
+});
+
+describe('readRecords', () => {
+  const body = makeResponse({
+    qname: 'a.test',
+    qtype: T.MX,
+    answer: [{type: T.MX, ttl: 30, rdata: mxRdata(10, 'mail.a.test')}],
+    authority: [{name: 'test', type: T.SOA, ttl: 900, rdata: soaRdata(900)}],
+    additional: [
+      {name: 'mail.a.test', type: T.A, ttl: 77, rdata: ip4('5.6.7.8')},
+    ],
+  });
+
+  test('lists every record with its section and offsets', () => {
+    const records = readRecords(body);
+    assert.deepEqual(
+      records.map(r => [r.section, r.type, r.ttl]),
+      [
+        ['answer', T.MX, 30],
+        ['authority', T.SOA, 900],
+        ['additional', T.A, 77],
+        ['additional', 41, 0],
+      ]
+    );
+    for (const r of records) {
+      assert.equal(r.end, r.start + 10 + r.length);
+      assert.ok(r.name < r.start);
+    }
+    assert.equal(records.at(-1)!.end, body.length);
+  });
+
+  test('throws when a record runs past the end', () => {
+    assert.throws(() => readRecords(body.subarray(0, body.length - 3)));
+  });
+});
+
+describe('makeRecord and makeQuestion', () => {
+  test('a record is owned by the question name, class IN', () => {
+    const m = parseMsg(
+      respond(q('a.test', T.A), 0, [makeRecord(T.TXT, 42, [3, 97, 98, 99])])
+    );
+    assert.equal(m.answer[0].name, 'a.test.');
+    assert.equal(m.answer[0].type, T.TXT);
+    assert.equal(m.answer[0].ttl, 42);
+    assert.deepEqual([...m.answer[0].rdata], [3, 97, 98, 99]);
+  });
+
+  test('a question for the JSON API wants recursion and has no EDNS', () => {
+    const question = makeQuestion('WWW.Example.com.', T.AAAA);
+    assert.equal(question.name, 'www.example.com');
+    assert.equal(question.type, T.AAAA);
+    assert.equal(question.rd, true);
+    assert.equal(question.edns, false);
+    assert.deepEqual(question.raw.slice(-4), [0, T.AAAA, 0, 1]);
+    assert.equal(
+      parseQuestion(
+        Uint8Array.from([0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, ...question.raw])
+      ).name,
+      'www.example.com'
     );
   });
 });

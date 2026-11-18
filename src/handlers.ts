@@ -4,8 +4,14 @@
  * https://developers.google.com/speed/public-dns/docs/doh
  */
 
-import {MAX_DNS_PARAM, MAX_QUERY, RECORD_TYPES} from './config.js';
-import {encodeName, lowerAscii, parseQuestion, respond, u16} from './dns.js';
+import {MAX_DNS_PARAM, MAX_QUERY} from './config.js';
+import {
+  RCODE_SERVFAIL,
+  RECORD_TYPES,
+  TYPE_NAPTR,
+  TYPE_PTR,
+} from './constants.js';
+import {makeQuestion, parseQuestion, respond} from './dns.js';
 import {clientEcs, parseEcsParam, reverseName} from './ecs.js';
 import {toJson} from './format.js';
 import {resolve} from './resolve.js';
@@ -125,7 +131,7 @@ export async function handle(
   try {
     return wireResponse(await resolve(question, options), timing);
   } catch {
-    return wireResponse({body: respond(question, 2, []), ttl: 5}); // SERVFAIL.
+    return wireResponse({body: respond(question, RCODE_SERVFAIL, []), ttl: 5}); // SERVFAIL.
   }
 }
 
@@ -187,7 +193,7 @@ export async function handleJson(
     return textResponse('invalid type', 400);
   }
   // PTR/NAPTR for an IP address: look up its reverse-DNS name instead.
-  if (type === 12 || type === 35) {
+  if (type === TYPE_PTR || type === TYPE_NAPTR) {
     name = reverseName(name.replace(/\.$/, '')) ?? name;
   }
   if (!isValidName(name)) {
@@ -209,27 +215,13 @@ export async function handleJson(
     }
   }
 
-  const question: Question = {
-    id: 0,
-    name: lowerAscii(name.replace(/\.$/, '')),
-    type,
-    raw: [...encodeName(name), ...u16(type), 0, 1],
-    edns: false,
-    dnssecOk: false,
-    cd: false,
-    ad: false,
-    rd: true,
-    opcode: 0,
-    ednsVersion: 0,
-    padding: false,
-    malformed: false,
-  };
+  const question = makeQuestion(name, type);
 
   let result;
   try {
     result = await resolve(question, options);
   } catch {
-    result = {body: respond(question, 2, []), ttl: 5}; // SERVFAIL.
+    result = {body: respond(question, RCODE_SERVFAIL, []), ttl: 5}; // SERVFAIL.
   }
   if (params.get('ct') === 'application/dns-message') {
     return wireResponse(result, options.timing);

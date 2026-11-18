@@ -1,5 +1,7 @@
 # Features, standards and tests
 
+Code layout: `constants.ts` (record types, rcodes, option codes, EDE, local TTLs), `config.ts` (tunable settings only), `dns.ts` (wire format; `readRecords` is the base of every record reader and editor).
+
 Every feature, the standard it follows, where it lives and which test covers it.
 `npm test` runs all tests (`node:test` via tsx, upstream mocked); `npm run check` also typechecks them.
 "Deliberate deviation" marks a place where performance or privacy wins over the RFC.

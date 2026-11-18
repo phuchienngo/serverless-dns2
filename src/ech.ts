@@ -5,10 +5,12 @@
  * Cloudflare and, if so, answer with an HTTPS record carrying that key.
  */
 
-import {ECH_ENABLED, ECH_FRONT_DOMAIN, TYPE_A, TYPE_HTTPS} from './config.js';
+import {ECH_ENABLED, ECH_FRONT_DOMAIN} from './config.js';
+import {ECH_PARAM, RCODE_NOERROR, TYPE_A, TYPE_HTTPS} from './constants.js';
 import {
   buildQuery,
   encodeName,
+  makeRecord,
   parseAnswers,
   readName,
   respond,
@@ -35,7 +37,6 @@ const CLOUDFLARE_V4: Array<[string, number]> = [
   ['131.0.72.0', 22],
 ];
 
-const ECH_PARAM = 5;
 const IPV4_HINT_PARAM = 4;
 const ECH_CONFIG_TTL_MS = 3600 * 1000;
 const SYNTHETIC_TTL = 300;
@@ -208,20 +209,8 @@ export async function addEch(
       ...u16(config.length),
       ...config,
     ];
-    const record = [
-      0xc0,
-      12,
-      ...u16(TYPE_HTTPS),
-      0,
-      1,
-      0,
-      0,
-      1,
-      44,
-      ...u16(rdata.length),
-      ...rdata,
-    ];
-    return {body: respond(q, 0, [record]), ttl: SYNTHETIC_TTL};
+    const record = makeRecord(TYPE_HTTPS, SYNTHETIC_TTL, rdata);
+    return {body: respond(q, RCODE_NOERROR, [record]), ttl: SYNTHETIC_TTL};
   } catch {
     return result;
   }

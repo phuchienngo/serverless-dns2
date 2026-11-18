@@ -3,7 +3,7 @@
  * format (https://developers.google.com/speed/public-dns/docs/doh/json).
  */
 
-import {TYPE_OPT} from './config.js';
+import {TYPE_OPT} from './constants.js';
 import {latin1, readName} from './dns.js';
 
 const decoder = new TextDecoder();

@@ -14,12 +14,6 @@ import {
   CNAME_UNCLOAK,
   ECS_ENABLED,
   REDIRECTS,
-  TYPE_A,
-  TYPE_AAAA,
-  TYPE_ANY,
-  TYPE_HINFO,
-  TYPE_HTTPS,
-  TYPE_SVCB,
   HEDGE_MAX_MS,
   HEDGE_MIN_MS,
   UPSTREAM,
@@ -27,15 +21,39 @@ import {
   UPSTREAM_TIMEOUT_MS,
 } from './config.js';
 import {
-  buildQuery,
-  cnameTargets,
   EDE_BLOCKED,
   EDE_STALE_ANSWER,
+  OPTION_ECS,
+  RCODE_BADVERS,
+  RCODE_FORMERR,
+  RCODE_NOERROR,
+  RCODE_NOTIMP,
+  RCODE_NXDOMAIN,
+  RCODE_REFUSED,
+  TTL_BLOCKED,
+  TTL_DDR,
+  TTL_LOCAL,
+  TTL_SHORT,
+  TYPES_FORMERR,
+  TYPES_NOTIMP,
+  TYPE_A,
+  TYPE_AAAA,
+  TYPE_ANY,
+  TYPE_HINFO,
+  TYPE_HTTPS,
+  TYPE_SVCB,
+  CLASS_IN,
+} from './constants.js';
+import {
+  buildQuery,
+  cnameTargets,
   addOptOption,
   copyRd,
   edeOption,
   encodeName,
+  makeRecord,
   padResponse,
+  QUESTION_POINTER,
   removeOptOption,
   minTtl,
   parseAnswers,
@@ -43,7 +61,6 @@ import {
   respondNegative,
   stripOpt,
   u16,
-  u32,
 } from './dns.js';
 import {getBlocklist, isReady, peekBlocklist, peekRules} from './blocklist.js';
 import {addEch, startEchProbe} from './ech.js';
@@ -54,10 +71,8 @@ import {isUndelegated} from './undelegated.js';
 
 const encoder = new TextEncoder();
 
-/** QTYPEs that must not be queried: 0 (RFC 6895), OPT (RFC 6891), TKEY, TSIG. */
-const FORMERR_TYPES = new Set([0, 41, 249, 250]);
-/** Zone transfers and the obsolete MAILB/MAILA: not served by a recursor. */
-const NOTIMP_TYPES = new Set([251, 252, 253, 254]);
+const FORMERR_TYPES = new Set(TYPES_FORMERR);
+const NOTIMP_TYPES = new Set(TYPES_NOTIMP);
 
 /** Types refused locally with NODATA (see config.ts). */
 const BLOCKED_TYPES = new Set<number>([
@@ -146,8 +161,7 @@ function redirected(resp: Uint8Array, q: Question): Result {
   const records = parseAnswers(resp)
     .filter(a => a.type === TYPE_A || a.type === TYPE_AAAA)
     .map(a => [
-      0xc0,
-      12, // Owner name: pointer to the question.
+      ...QUESTION_POINTER,
       ...resp.subarray(a.start, a.start + 10 + a.length),
     ]);
   return {body: respond(q, rcode, records), ttl: minTtl(resp)};
@@ -170,21 +184,8 @@ function ddrAnswer(q: Question, host: string): Uint8Array {
     ...u16(path.length),
     ...path, // Key 7: dohpath.
   ];
-  const record = [
-    0xc0,
-    12, // Owner name: pointer to the question.
-    0,
-    TYPE_SVCB,
-    0,
-    1, // Class IN.
-    0,
-    0,
-    1,
-    44, // TTL 300.
-    ...u16(rdata.length),
-    ...rdata,
-  ];
-  return respond(q, 0, [record]);
+  const record = makeRecord(TYPE_SVCB, TTL_DDR, rdata);
+  return respond(q, RCODE_NOERROR, [record]);
 }
 
 /**
@@ -277,7 +278,7 @@ export async function resolve(
   let body = copyRd(result.body, q.rd);
   if (!options.ecs) {
     // RFC 7871 7.2.2: no ECS option in a response to a query without one.
-    body = removeOptOption(body, 8);
+    body = removeOptOption(body, OPTION_ECS);
   }
   if (!q.edns) {
     // The upstream always sends an OPT record; a client that sent none must
@@ -294,18 +295,51 @@ export async function resolve(
   return {...result, body};
 }
 
-/** @return A record whose owner is the question's name, class IN. */
-function record(type: number, ttl: number, rdata: number[]): number[] {
-  return [
-    0xc0,
-    12, // Owner name: pointer to the question.
-    ...u16(type),
-    0,
-    1,
-    ...u32(ttl),
-    ...u16(rdata.length),
-    ...rdata,
-  ];
+/** An error response with no records, which clients should not cache. */
+function error(q: Question, rcode: number): Result {
+  return {body: respond(q, rcode, []), ttl: 0};
+}
+
+/**
+ * @return The response code for a question that must not be resolved, or null.
+ */
+function refuseQuestion(q: Question): number | null {
+  if (q.malformed) {
+    return RCODE_FORMERR; // RFC 6891 6.1.1.
+  }
+  if (q.opcode !== 0) {
+    return RCODE_NOTIMP;
+  }
+  if (q.ednsVersion > 0) {
+    return RCODE_BADVERS; // RFC 6891 6.1.3.
+  }
+  if (FORMERR_TYPES.has(q.type)) {
+    return RCODE_FORMERR;
+  }
+  if (NOTIMP_TYPES.has(q.type)) {
+    return RCODE_NOTIMP;
+  }
+  const [classHigh, classLow] = q.raw.slice(-2);
+  if (((classHigh << 8) | classLow) !== CLASS_IN) {
+    return RCODE_REFUSED; // The cache key has no class: serve IN only.
+  }
+  return null;
+}
+
+/** RFC 6761: localhost names are the loopback address. */
+function localhost(q: Question): Result {
+  const address =
+    q.type === TYPE_A
+      ? [makeRecord(TYPE_A, TTL_LOCAL, [127, 0, 0, 1])]
+      : q.type === TYPE_AAAA
+        ? [makeRecord(TYPE_AAAA, TTL_LOCAL, [...new Array(15).fill(0), 1])]
+        : [];
+  return {
+    body: address.length
+      ? respond(q, RCODE_NOERROR, address)
+      : respondNegative(q, RCODE_NOERROR, TTL_LOCAL),
+    ttl: TTL_LOCAL,
+  };
 }
 
 async function resolveQuestion(
@@ -314,53 +348,30 @@ async function resolveQuestion(
 ): Promise<Result> {
   const {env, host} = options;
 
-  if (q.malformed) {
-    return {body: respond(q, 1, []), ttl: 0}; // FORMERR (RFC 6891 6.1.1).
-  }
-  if (q.opcode !== 0) {
-    return {body: respond(q, 4, []), ttl: 0}; // NOTIMP.
-  }
-  if (q.ednsVersion > 0) {
-    return {body: respond(q, 16, []), ttl: 0}; // BADVERS (RFC 6891).
-  }
-  if (FORMERR_TYPES.has(q.type)) {
-    return {body: respond(q, 1, []), ttl: 0};
-  }
-  if (NOTIMP_TYPES.has(q.type)) {
-    return {body: respond(q, 4, []), ttl: 0};
-  }
-  if (q.raw[q.raw.length - 2] !== 0 || q.raw[q.raw.length - 1] !== 1) {
-    // Only class IN is served; the cache key has no class.
-    return {body: respond(q, 5, []), ttl: 0}; // REFUSED.
+  // Queries that cannot or will not be answered (RFC 1035, 6891, 6895, 5936).
+  const refusal = refuseQuestion(q);
+  if (refusal !== null) {
+    return error(q, refusal);
   }
 
   const isDdr =
     q.type === TYPE_SVCB &&
     (q.name === '_dns.resolver.arpa' || q.name === `_dns.${host}`);
   if (isDdr) {
-    return {body: ddrAnswer(q, host), ttl: 300};
+    return {body: ddrAnswer(q, host), ttl: TTL_DDR};
   }
   if (q.name === 'resolver.arpa' || q.name.endsWith('.resolver.arpa')) {
     // RFC 9462: reserved for DDR; never forwarded.
-    return {body: respondNegative(q, 0, 300), ttl: 300};
+    return {body: respondNegative(q, RCODE_NOERROR, TTL_DDR), ttl: TTL_DDR};
   }
   if (q.name === 'localhost' || q.name.endsWith('.localhost')) {
-    // RFC 6761: localhost names are the loopback address.
-    const address =
-      q.type === TYPE_A
-        ? [record(TYPE_A, 3600, [127, 0, 0, 1])]
-        : q.type === TYPE_AAAA
-          ? [record(TYPE_AAAA, 3600, [...new Array(15).fill(0), 1])]
-          : [];
-    return {
-      body: address.length
-        ? respond(q, 0, address)
-        : respondNegative(q, 0, 3600),
-      ttl: 3600,
-    };
+    return localhost(q);
   }
   if (BLOCK_UNDELEGATED && isUndelegated(q.name)) {
-    return {body: respondNegative(q, 3, 3600), ttl: 3600};
+    return {
+      body: respondNegative(q, RCODE_NXDOMAIN, TTL_LOCAL),
+      ttl: TTL_LOCAL,
+    };
   }
 
   if (BLOCKLIST_ENABLED) {
@@ -406,8 +417,11 @@ function blockReason(name: string): string | null {
 /** NXDOMAIN with an Extended DNS Error saying the name was blocked. */
 function nxdomain(q: Question, reason: string): Result {
   return {
-    body: respondNegative(q, 3, 300, {code: EDE_BLOCKED, text: reason}),
-    ttl: 300,
+    body: respondNegative(q, RCODE_NXDOMAIN, TTL_BLOCKED, {
+      code: EDE_BLOCKED,
+      text: reason,
+    }),
+    ttl: TTL_BLOCKED,
   };
 }
 
@@ -445,16 +459,23 @@ async function answer(q: Question, options: ResolveOptions): Promise<Result> {
     if (q.type === TYPE_ANY) {
       // RFC 8482: a minimal HINFO answer.
       const text = [...encoder.encode('RFC8482')];
-      const hinfo = record(TYPE_HINFO, 3600, [text.length, ...text, 0]);
-      return {body: respond(q, 0, [hinfo]), ttl: 3600};
+      const hinfo = makeRecord(TYPE_HINFO, TTL_LOCAL, [
+        text.length,
+        ...text,
+        0,
+      ]);
+      return {body: respond(q, RCODE_NOERROR, [hinfo]), ttl: TTL_LOCAL};
     }
-    return {body: respondNegative(q, 0, 3600), ttl: 3600};
+    return {
+      body: respondNegative(q, RCODE_NOERROR, TTL_LOCAL),
+      ttl: TTL_LOCAL,
+    };
   }
 
   const target = REDIRECTS[q.name];
   if (target && (q.type === TYPE_SVCB || q.type === TYPE_HTTPS)) {
     // Service hints would reveal the original IPs: answer NODATA.
-    return {body: respondNegative(q, 0, 60), ttl: 60};
+    return {body: respondNegative(q, RCODE_NOERROR, TTL_SHORT), ttl: TTL_SHORT};
   }
 
   let ecs = null;
