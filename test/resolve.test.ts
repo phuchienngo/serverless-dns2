@@ -573,6 +573,29 @@ describe('serve-stale (RFC 8767)', () => {
     assert.equal(renewed.msg.opt!.options.length, 0);
   });
 
+  test('a stale NXDOMAIN carries EDE 19, not 3 (RFC 8914)', async () => {
+    mock.timers.enable({apis: ['Date'], now: 1_800_000_000_000});
+    const name = fresh();
+    useUpstream(q =>
+      makeResponse({
+        qname: name,
+        qtype: T.A,
+        rcode: 3,
+        authority: [
+          {name: 'example.com', type: T.SOA, ttl: 300, rdata: soaRdata(300)},
+        ],
+        opt: {do: q.opt?.do},
+      })
+    );
+    await ask(name, T.A);
+    mock.timers.tick(400_000);
+    const stale = await ask(name, T.A);
+    assert.equal(stale.result.stale, true);
+    assert.equal(stale.msg.rcode, 3);
+    const ede = stale.msg.opt!.options.find(o => o.code === 15)!;
+    assert.deepEqual([...ede.data.subarray(0, 2)], [0, 19]);
+  });
+
   test('a client without EDNS gets the stale answer without the option', async () => {
     mock.timers.enable({apis: ['Date'], now: 1_800_000_000_000});
     const name = fresh();

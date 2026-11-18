@@ -8,8 +8,12 @@ import {blockReason, nxdomain, uncloak} from './blocking.js';
 import {getBlocklist, isReady} from './blocklist.js';
 import {BLOCKLIST_ENABLED, ECS_ENABLED} from './config.js';
 import {
+  EDE_NETWORK_ERROR,
   EDE_STALE_ANSWER,
+  EDE_STALE_NXDOMAIN,
   OPTION_ECS,
+  RCODE_NXDOMAIN,
+  RCODE_SERVFAIL,
   TTL_DDR,
   TYPE_A,
   TYPE_AAAA,
@@ -25,6 +29,7 @@ import {
   edeOption,
   padResponse,
   removeOptOption,
+  respond,
   stripOpt,
 } from './dns.js';
 import {addEch, startEchProbe} from './ech.js';
@@ -108,7 +113,9 @@ export async function resolve(
     body = stripOpt(body);
   } else {
     if (result.stale) {
-      body = addOptOption(body, edeOption(EDE_STALE_ANSWER, ''));
+      const nxdomain = (body[3] & 15) === RCODE_NXDOMAIN;
+      const code = nxdomain ? EDE_STALE_NXDOMAIN : EDE_STALE_ANSWER;
+      body = addOptOption(body, edeOption(code, ''));
     }
     if (q.padding) {
       body = padResponse(body); // Last, so that the size is final.
@@ -221,4 +228,18 @@ async function answer(q: Question, options: ResolveOptions): Promise<Result> {
   // The Cache API had nothing, or the upstream failed: use what is left.
   const hit = await shared;
   return hit ? hit.result : fetching;
+}
+
+/**
+ * The answer when the upstream resolver cannot be reached: SERVFAIL with an
+ * Extended DNS Error (RFC 8914) saying why, kept in clients' caches briefly.
+ */
+export function upstreamFailure(q: Question): Result {
+  return {
+    body: respond(q, RCODE_SERVFAIL, [], {
+      code: EDE_NETWORK_ERROR,
+      text: 'upstream unreachable',
+    }),
+    ttl: 5,
+  };
 }

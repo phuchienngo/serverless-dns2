@@ -132,7 +132,22 @@ describe('/dns-query (RFC 8484)', () => {
     });
     const res = await post(makeQuery(fresh(), T.A));
     assert.equal(res.status, 200);
-    assert.equal(parseMsg(new Uint8Array(await res.arrayBuffer())).rcode, 2);
+    const m = parseMsg(new Uint8Array(await res.arrayBuffer()));
+    assert.equal(m.rcode, 2);
+    const ede = m.opt!.options.find(o => o.code === 15)!;
+    assert.deepEqual([...ede.data.subarray(0, 2)], [0, 23], 'Network Error');
+    assert.equal(res.headers.get('cache-control'), 'private, max-age=5');
+  });
+
+  test('a SERVFAIL for a client without EDNS has no OPT record', async () => {
+    upstream.restore();
+    upstream = mockUpstream(() => {
+      throw new Error('down');
+    });
+    const res = await post(makeQuery(fresh(), T.A, {edns: false}));
+    const m = parseMsg(new Uint8Array(await res.arrayBuffer()));
+    assert.equal(m.rcode, 2);
+    assert.equal(m.opt, undefined);
   });
 
   test('DO, CD and a client subnet reach the upstream', async () => {

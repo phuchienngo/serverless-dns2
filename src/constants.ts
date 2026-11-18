@@ -136,6 +136,8 @@ export const ECH_PARAM = 5; // SvcParamKey `ech` (RFC 9460).
 
 /** Extended DNS Error info codes (RFC 8914) that are used. */
 export const EDE_STALE_ANSWER = 3;
+export const EDE_STALE_NXDOMAIN = 19;
+export const EDE_NETWORK_ERROR = 23;
 export const EDE_BLOCKED = 15;
 
 /**

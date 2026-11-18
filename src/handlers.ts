@@ -5,16 +5,11 @@
  */
 
 import {MAX_DNS_PARAM, MAX_QUERY} from './config.js';
-import {
-  RCODE_SERVFAIL,
-  RECORD_TYPES,
-  TYPE_NAPTR,
-  TYPE_PTR,
-} from './constants.js';
-import {makeQuestion, parseQuestion, respond} from './dns.js';
+import {RECORD_TYPES, TYPE_NAPTR, TYPE_PTR} from './constants.js';
+import {makeQuestion, parseQuestion} from './dns.js';
 import {clientEcs, parseEcsParam, reverseName} from './ecs.js';
 import {toJson} from './format.js';
-import {resolve} from './resolve.js';
+import {resolve, upstreamFailure} from './resolve.js';
 import type {Context, Question, ResolveOptions, Result} from './types.js';
 
 function textResponse(
@@ -131,7 +126,7 @@ export async function handle(
   try {
     return wireResponse(await resolve(question, options), timing);
   } catch {
-    return wireResponse({body: respond(question, RCODE_SERVFAIL, []), ttl: 5}); // SERVFAIL.
+    return wireResponse(upstreamFailure(question));
   }
 }
 
@@ -221,7 +216,7 @@ export async function handleJson(
   try {
     result = await resolve(question, options);
   } catch {
-    result = {body: respond(question, RCODE_SERVFAIL, []), ttl: 5}; // SERVFAIL.
+    result = upstreamFailure(question);
   }
   if (params.get('ct') === 'application/dns-message') {
     return wireResponse(result, options.timing);
