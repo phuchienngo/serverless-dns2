@@ -95,6 +95,7 @@ export function parseQuestion(buf: Uint8Array): Question {
     edns: opt !== null,
     dnssecOk: !!opt && (opt.flags & 0x8000) !== 0,
     cd: (buf[3] & 0x10) !== 0,
+    ad: (buf[3] & 0x20) !== 0,
     rd: (buf[2] & 1) !== 0,
     opcode: (buf[2] >> 3) & 15,
     ednsVersion: opt?.version ?? 0,
@@ -148,7 +149,11 @@ function findOpt(
 export function buildQuery(
   question: number[],
   ecs: number[] | null,
-  {dnssec = false, cd = false}: {dnssec?: boolean; cd?: boolean} = {}
+  {
+    dnssec = false,
+    cd = false,
+    ad = false,
+  }: {dnssec?: boolean; cd?: boolean; ad?: boolean} = {}
 ): Uint8Array {
   const option = ecs || [];
   const opt = [
@@ -164,7 +169,20 @@ export function buildQuery(
     ...u16(option.length),
     ...option,
   ];
-  const header = [0, 0, 1, cd ? 0x10 : 0, 0, 1, 0, 0, 0, 0, 0, 1];
+  const header = [
+    0,
+    0,
+    1,
+    (cd ? 0x10 : 0) | (ad ? 0x20 : 0),
+    0,
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    1,
+  ];
   return new Uint8Array([...header, ...question, ...opt]);
 }
 
@@ -485,6 +503,38 @@ export function cnameTargets(resp: Uint8Array): string[] {
   } catch {
     return [];
   }
+}
+
+/**
+ * Lists the records of the authority section; `start` is the offset of the
+ * record's TYPE field.
+ */
+export function parseAuthority(resp: Uint8Array): AnswerRecord[] {
+  const view = new DataView(resp.buffer, resp.byteOffset, resp.byteLength);
+  const answers = view.getUint16(6);
+  const total = answers + view.getUint16(8);
+  let offset = skipName(resp, 12) + 4;
+  const records = [];
+  for (let i = 0; i < total; i++) {
+    offset = skipName(resp, offset);
+    if (offset + 10 > resp.length) {
+      throw new Error('bad response');
+    }
+    const length = view.getUint16(offset + 8);
+    if (offset + 10 + length > resp.length) {
+      throw new Error('bad response');
+    }
+    if (i >= answers) {
+      records.push({
+        start: offset,
+        type: view.getUint16(offset),
+        ttl: view.getUint32(offset + 4),
+        length,
+      });
+    }
+    offset += 10 + length;
+  }
+  return records;
 }
 
 /**

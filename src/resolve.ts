@@ -190,10 +190,11 @@ function cacheKey(
   q: Question,
   ecs: number[] | null,
   dnssec: boolean,
-  cd: boolean
+  cd: boolean,
+  ad: boolean
 ): string {
   const subnet = ecs ? ecs.slice(4).join('-') : 'none';
-  const flags = `${+dnssec}${+cd}`;
+  const flags = `${+dnssec}${+cd}${+ad}`;
   const name = encodeURIComponent(q.name);
   return `https://${host}/__cache/${name}/${q.type}/${subnet}/${flags}`;
 }
@@ -205,7 +206,7 @@ async function askUpstream(
   q: Question,
   env: Env,
   ecs: number[] | null,
-  flags: {dnssec: boolean; cd: boolean}
+  flags: {dnssec: boolean; cd: boolean; ad: boolean}
 ): Promise<Result> {
   const target = REDIRECTS[q.name];
   if (target && (q.type === TYPE_A || q.type === TYPE_AAAA)) {
@@ -407,7 +408,11 @@ function uncloak(q: Question, result: Result): Result {
  */
 async function answer(q: Question, options: ResolveOptions): Promise<Result> {
   const {env, host, cache, waitUntil} = options;
-  const flags = {dnssec: !!options.dnssec, cd: !!options.cd};
+  const flags = {
+    dnssec: !!options.dnssec,
+    cd: !!options.cd,
+    ad: !!options.ad,
+  };
 
   if (BLOCKED_TYPES.has(q.type)) {
     if (q.type === TYPE_ANY) {
@@ -432,10 +437,14 @@ async function answer(q: Question, options: ResolveOptions): Promise<Result> {
     ecs = makeEcs(options.ip);
   }
 
-  const key = cacheKey(host, q, ecs, flags.dnssec, flags.cd);
+  const key = cacheKey(host, q, ecs, flags.dnssec, flags.cd, flags.ad);
   const fetchFresh = async () => {
     const result = await coalesce(key, q, async () => {
-      const probe = startEchProbe(q, ecs, wire => forward(env, wire));
+      // ECH replaces the HTTPS record with an unsigned one, which a client that
+      // validates DNSSEC (DO) would reject; give those the real record.
+      const probe = flags.dnssec
+        ? null
+        : startEchProbe(q, ecs, wire => forward(env, wire));
       return addEch(await askUpstream(q, env, ecs, flags), q, probe);
     });
     store(cache, key, result, waitUntil);

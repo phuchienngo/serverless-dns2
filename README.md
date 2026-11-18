@@ -21,13 +21,13 @@ then set `dns_ddr_version 1` and `networkmonitor_async_privdns_resolution 1` via
 - Honours a client-supplied ECS (dnsproxy / AdGuard Home `edns-addr`); empty subnets such as `::/0` are ignored.
 - `BLOCK_ANY/AAAA/PTR/HTTPS` in `src/config.ts` answer those query types with NODATA locally.
 - `/resolve?name=8.8.8.8&type=PTR` converts an IP to its reverse name.
-- The DO and CD bits of a query are passed to the upstream (DNSSEC records and `AD` come back as asked). Answers made
+- The DO and CD bits of a query are passed to the upstream (DNSSEC records and `AD` come back as asked; a query with AD but no DO also gets `AD`). Answers made
   locally (blocked names, NODATA) carry a made-up SOA so clients can cache them (RFC 2308), and an OPT record only if the
   query had one (RFC 6891); an OPT record from the upstream is dropped for a client that sent none.
 - Padding (RFC 8467): a query with an EDNS Padding option gets its response padded to a multiple of 468 bytes. Stale
   answers carry EDE 3 (RFC 8767). `localhost` and `*.localhost` answer 127.0.0.1 / ::1 (RFC 6761), `ANY` gets a minimal
   HINFO (RFC 8482), non-QUERY opcodes get NOTIMP and EDNS versions above 0 get BADVERS. RD and the opcode are echoed.
-- Best-effort ECH: for Cloudflare-hosted names the HTTPS answer gets Cloudflare's shared `ech` key (`src/ech.ts`).
+- Best-effort ECH: for Cloudflare-hosted names the HTTPS answer gets Cloudflare's shared `ech` key (`src/ech.ts`). Not done for queries with DO, as the replaced record would carry no signature.
 
 ## Blocklist
 

@@ -6,6 +6,7 @@
 
 /** Top-level labels reserved for private or special use. */
 const PRIVATE_TLDS = new Set([
+  'alt', // RFC 9476.
   'corp',
   'example',
   'home',
@@ -23,7 +24,10 @@ const PRIVATE_TLDS = new Set([
   'test',
 ]);
 
-/** Reverse zones of private, loopback, link-local and CGNAT addresses. */
+/**
+ * Reverse zones of private, loopback, link-local, CGNAT and documentation
+ * addresses (RFC 6303).
+ */
 const PRIVATE_REVERSE = [
   /(^|\.)10\.in-addr\.arpa$/,
   /(^|\.)127\.in-addr\.arpa$/,
@@ -34,6 +38,13 @@ const PRIVATE_REVERSE = [
   /(^|\.)(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.100\.in-addr\.arpa$/,
   /(^|\.)[89ab]\.e\.f\.ip6\.arpa$/, // fe80::/10
   /(^|\.)[cd]\.f\.ip6\.arpa$/, // fc00::/7
+  /(^|\.)2\.0\.192\.in-addr\.arpa$/, // 192.0.2.0/24
+  /(^|\.)100\.51\.198\.in-addr\.arpa$/, // 198.51.100.0/24
+  /(^|\.)113\.0\.203\.in-addr\.arpa$/, // 203.0.113.0/24
+  /(^|\.)255\.255\.255\.255\.in-addr\.arpa$/,
+  /(^|\.)8\.b\.d\.0\.1\.0\.0\.2\.ip6\.arpa$/, // 2001:db8::/32
+  /^1(\.0){31}\.ip6\.arpa$/, // ::1
+  /^0(\.0){31}\.ip6\.arpa$/, // ::
 ];
 
 /**

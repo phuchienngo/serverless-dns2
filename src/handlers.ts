@@ -68,11 +68,8 @@ export async function handle(
   const url = new URL(request.url);
 
   const method = request.method;
-  if (method === 'HEAD') {
-    return textResponse('bad request', 400);
-  }
   if (method !== 'GET' && method !== 'POST') {
-    return textResponse('not implemented', 501, {allow: 'GET, POST'});
+    return textResponse('method not allowed', 405, {allow: 'GET, POST'});
   }
 
   let wire;
@@ -120,6 +117,7 @@ export async function handle(
     timing,
     dnssec: question.dnssecOk,
     cd: question.cd,
+    ad: question.ad && !question.dnssecOk,
   };
   if (ecs) {
     options.ecs = ecs;
@@ -219,6 +217,7 @@ export async function handleJson(
     edns: false,
     dnssecOk: false,
     cd: false,
+    ad: false,
     rd: true,
     opcode: 0,
     ednsVersion: 0,

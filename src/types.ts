@@ -16,6 +16,8 @@ export interface Question {
   dnssecOk: boolean;
   /** The CD (checking disabled) flag of the query. */
   cd: boolean;
+  /** The AD flag of the query: the client wants to know if answers validated. */
+  ad: boolean;
   /** The RD flag, which a response copies. */
   rd: boolean;
   opcode: number;
@@ -53,6 +55,8 @@ export interface ResolveOptions extends Context {
   ecs?: number[] | null;
   dnssec?: boolean;
   cd?: boolean;
+  /** Ask for the AD flag even without DO (RFC 6840 5.7). */
+  ad?: boolean;
   /** Filled with durations in ms (see `serverTiming`). */
   timing?: Record<string, number>;
 }

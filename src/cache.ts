@@ -11,7 +11,7 @@ import {
   STALE_MAX_S,
   STALE_TTL,
 } from './config.js';
-import {parseAnswers, u16} from './dns.js';
+import {parseAnswers, parseAuthority, u16} from './dns.js';
 import type {Question, Result} from './types.js';
 
 /** A cached response. `storedAt` is in milliseconds, `ttl` in seconds. */
@@ -103,8 +103,8 @@ function serve(entry: Entry, q: Question, now: number): Hit | null {
   body.set(q.raw, 12); // Same length as stored; restores the client's case.
   try {
     const view = new DataView(body.buffer);
-    for (const answer of parseAnswers(body)) {
-      view.setUint32(answer.start + 4, remaining);
+    for (const record of [...parseAnswers(body), ...parseAuthority(body)]) {
+      view.setUint32(record.start + 4, remaining);
     }
   } catch {
     return null;
