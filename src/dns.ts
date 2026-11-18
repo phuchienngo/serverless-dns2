@@ -83,6 +83,9 @@ export function parseQuestion(buf: Uint8Array): Question {
     offset += length + 1;
   }
   offset++; // Root label.
+  if (offset - 12 > 255) {
+    throw new Error('name too long'); // RFC 1035 2.3.4.
+  }
   if (offset + 4 > buf.length) {
     throw new Error('truncated');
   }
@@ -286,7 +289,7 @@ function build(
   const header = [
     ...u16(q.id),
     0x80 | (q.opcode << 3) | (q.rd ? 1 : 0), // QR, opcode, RD as asked.
-    0x80 | (rcode & 15), // RA, response code.
+    0x80 | (q.cd ? 0x10 : 0) | (rcode & 15), // RA, CD as asked, response code.
     0,
     1, // One question.
     ...u16(answers.length),

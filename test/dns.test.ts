@@ -111,6 +111,16 @@ describe('parseQuestion (RFC 1035 4.1)', () => {
     assert.throws(() => parseQuestion(new Uint8Array(513)), 'too long');
   });
 
+  test('limits a name to 255 octets on the wire (RFC 1035 2.3.4)', () => {
+    const label = (c: string, n: number) => c.repeat(n);
+    const name = (last: number) =>
+      [label('a', 63), label('b', 63), label('c', 63), label('d', last)].join(
+        '.'
+      );
+    assert.equal(q(name(61), T.A).type, T.A, '255 octets');
+    assert.throws(() => q(name(62), T.A), '256 octets');
+  });
+
   test('rejects compressed, over-long and truncated names', () => {
     const compressed = Uint8Array.from(makeQuery('a.test', T.A));
     compressed[12] = 0xc0;
@@ -171,6 +181,13 @@ describe('respond (RFC 1035 4.1.1, RFC 6891)', () => {
     assert.equal(m.rcode, 3);
     assert.deepEqual(m.question, [{name: 'a.test.', type: T.A, cls: 1}]);
     assert.equal(parseMsg(respond(q('a.test', T.A), 0, [])).rd, true);
+  });
+
+  test('echoes CD, and never sets AD', () => {
+    const m = parseMsg(respond(q('a.test', T.A, {cd: true, ad: true}), 0, []));
+    assert.equal(m.cd, true);
+    assert.equal(m.ad, false);
+    assert.equal(parseMsg(respond(q('a.test', T.A), 0, [])).cd, false);
   });
 
   test('echoes the opcode', () => {
