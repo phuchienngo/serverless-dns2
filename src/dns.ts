@@ -251,6 +251,24 @@ function readOptions(
   return {options, exact: at === opt.end};
 }
 
+/**
+ * @return The EDNS options of the message's OPT record (none if it has no OPT).
+ * @throws If the records of the message do not parse.
+ */
+export function optOptions(
+  msg: Uint8Array
+): Array<{code: number; data: Uint8Array}> {
+  const view = new DataView(msg.buffer, msg.byteOffset, msg.byteLength);
+  const [opt] = optRecords(msg);
+  if (!opt) {
+    return [];
+  }
+  return readOptions(view, opt).options.map(o => ({
+    code: o.code,
+    data: msg.subarray(o.start + 4, o.end),
+  }));
+}
+
 /** The parts of a query's OPT record that the gateway uses. */
 interface QueryOpt {
   flags: number;
@@ -283,7 +301,7 @@ function findOpt(buf: Uint8Array): {opt: QueryOpt | null; malformed: boolean} {
       malformed: found.length > 1 || first.start - first.name !== 1 || !exact,
     };
   } catch {
-    return {opt: null, malformed: true};
+    return {opt: null, malformed: true}; // The records do not parse.
   }
 }
 
@@ -637,7 +655,7 @@ export function removeOptOption(resp: Uint8Array, code: number): Uint8Array {
     new DataView(out.buffer).setUint16(opt.start + 8, opt.length - removed);
     return out;
   } catch {
-    return resp;
+    return resp; // Not a message we can edit.
   }
 }
 
@@ -658,7 +676,7 @@ export function stripOpt(resp: Uint8Array): Uint8Array {
     view.setUint16(10, view.getUint16(10) - found.length);
     return out;
   } catch {
-    return resp;
+    return resp; // Not a message we can edit.
   }
 }
 
@@ -699,7 +717,7 @@ export function cnameTargets(resp: Uint8Array): string[] {
       .filter(a => a.type === TYPE_CNAME)
       .map(a => lowerAscii(readName(resp, a.data).name.replace(/\.$/, '')));
   } catch {
-    return [];
+    return []; // Not a message we can read: no targets.
   }
 }
 
@@ -715,7 +733,7 @@ export function minTtl(resp: Uint8Array): number {
     }
     return Math.min(negativeTtl(resp) ?? DEFAULT_TTL, MAX_TTL);
   } catch {
-    return DEFAULT_TTL;
+    return DEFAULT_TTL; // Not a message we can read.
   }
 }
 

@@ -17,6 +17,7 @@ import {
   mockUpstream,
   parseMsg,
   plainOptions,
+  resetState,
   soaRdata,
   type Msg,
   type QueryOptions,
@@ -44,7 +45,10 @@ const useUpstream = (
   upstream = mockUpstream(handler);
   return upstream;
 };
-beforeEach(() => useUpstream());
+beforeEach(() => {
+  resetState();
+  useUpstream();
+});
 afterEach(() => {
   upstream.restore();
   mock.timers.reset();
@@ -441,6 +445,66 @@ describe('forwarding to the upstream', () => {
     );
     assert.equal(msg.answer.length, 1);
     assert.equal(upstream.calls.length, 2);
+  });
+});
+
+describe('redirects (config.ts REDIRECTS)', () => {
+  /** An upstream that gives voz.vn its own address and medium.com another. */
+  function redirectUpstream() {
+    return useUpstream(q => {
+      const {name, type} = q.question[0];
+      const address = name === 'voz.vn.' ? '203.0.113.50' : '192.0.2.1';
+      return makeResponse({
+        qname: name,
+        qtype: type,
+        answer:
+          type === T.A ? [{type: T.A, ttl: 120, rdata: ip4(address)}] : [],
+      });
+    });
+  }
+
+  test('medium.com gets the addresses of voz.vn, under its own name', async () => {
+    redirectUpstream();
+    const {msg} = await ask('medium.com', T.A);
+    assert.equal(msg.question[0].name, 'medium.com.');
+    assert.equal(msg.answer.length, 1);
+    assert.equal(msg.answer[0].name, 'medium.com.');
+    assert.deepEqual([...msg.answer[0].rdata], ip4('203.0.113.50'));
+    assert.equal(upstream.calls.length, 1);
+    assert.equal(upstream.calls[0].query.question[0].name, 'voz.vn.');
+  });
+
+  test('the redirect is cached like any answer', async () => {
+    redirectUpstream();
+    await ask('medium.com', T.A);
+    await ask('medium.com', T.A);
+    assert.equal(upstream.calls.length, 1);
+  });
+
+  test('HTTPS and SVCB queries get NODATA, so the hints cannot reveal the real addresses', async () => {
+    redirectUpstream();
+    for (const type of [T.HTTPS, T.SVCB]) {
+      const {msg} = await ask('medium.com', type);
+      assert.equal(msg.rcode, 0);
+      assert.equal(msg.answer.length, 0);
+      assert.equal(msg.authority[0].type, T.SOA);
+    }
+    assert.equal(upstream.calls.length, 0);
+  });
+
+  test('other types and other names are not redirected', async () => {
+    redirectUpstream();
+    await ask('medium.com', T.TXT);
+    await ask('www.medium.com', T.A);
+    const names = upstream.calls.map(c => c.query.question[0].name);
+    assert.deepEqual(names, ['medium.com.', 'www.medium.com.']);
+  });
+
+  test('AAAA is redirected too', async () => {
+    redirectUpstream();
+    await ask('medium.com', T.AAAA);
+    assert.equal(upstream.calls[0].query.question[0].name, 'voz.vn.');
+    assert.equal(upstream.calls[0].query.question[0].type, T.AAAA);
   });
 });
 

@@ -41,7 +41,7 @@ async function fetchRules(env: Env, host: string): Promise<Rules | null> {
       allow: compilePatterns(allow ?? []),
     };
   } catch {
-    return null;
+    return null; // Not loaded: load() retries after a while.
   }
 }
 
@@ -62,7 +62,7 @@ async function fetchBlockset(env: Env, host: string): Promise<BlockSet | null> {
     lastLoad = {asset: t1 - t0, body: t2 - t1, decode: performance.now() - t2};
     return set;
   } catch {
-    return null;
+    return null; // Not loaded, or not a blocklist: retried after a while.
   }
 }
 
@@ -78,6 +78,15 @@ async function load(env: Env, host: string): Promise<void> {
   if (!ready) {
     retryAt = Date.now() + RETRY_DELAY_MS;
   }
+}
+
+/** Unloads the blocklist and the rules (for tests). */
+export function resetBlocklist(): void {
+  hashes = null;
+  rules = {block: null, allow: null};
+  ready = false;
+  loading = null;
+  retryAt = 0;
 }
 
 /**

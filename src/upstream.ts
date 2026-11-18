@@ -145,6 +145,12 @@ export async function askUpstream(
 /** Queries in flight, so identical concurrent ones share one upstream call. */
 const pending = new Map<string, Promise<Result>>();
 
+/** Forgets the latency average and the queries in flight (for tests). */
+export function resetUpstream(): void {
+  latencyAverage = 30;
+  pending.clear();
+}
+
 /**
  * Copies a result for another client's question (same name, other id/case).
  */

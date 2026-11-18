@@ -133,6 +133,15 @@ export const OPTION_ECS = 8; // RFC 7871.
 export const OPTION_PADDING = 12; // RFC 7830.
 export const OPTION_EDE = 15; // RFC 8914.
 
+/** Address families of an ECS option (RFC 7871), with their address size in
+ * bits and the source prefix this gateway sends (/24 and /48). */
+export const FAMILY_IPV4 = 1;
+export const FAMILY_IPV6 = 2;
+export const ECS_FAMILIES: Record<number, {bits: number; prefix: number}> = {
+  [FAMILY_IPV4]: {bits: 32, prefix: 24},
+  [FAMILY_IPV6]: {bits: 128, prefix: 48},
+};
+
 /** SvcParamKeys (RFC 9460, 9461) and the ALPN ids of this gateway. */
 export const SVCPARAM_ALPN = 1;
 export const SVCPARAM_IPV4HINT = 4;

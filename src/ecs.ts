@@ -1,11 +1,17 @@
 /** @fileoverview EDNS Client Subnet (RFC 7871) helpers. */
 
-import {skipName, u16} from './dns.js';
+import {
+  ECS_FAMILIES,
+  FAMILY_IPV4,
+  FAMILY_IPV6,
+  OPTION_ECS,
+} from './constants.js';
+import {optOptions, u16} from './dns.js';
 
 /**
  * Parses an IPv4 or IPv6 address. IPv4-mapped IPv6 becomes plain IPv4.
- * @return Family is 1 (IPv4) or 2
- *     (IPv6); null if `ip` is not a valid address.
+ * @return The family (FAMILY_IPV4 or FAMILY_IPV6) and the address bytes; null
+ *     if `ip` is not a valid address.
  */
 function parseIp(ip: string): {family: number; bytes: number[]} | null {
   ip = ip.trim();
@@ -19,7 +25,7 @@ function parseIp(ip: string): {family: number; bytes: number[]} | null {
     const valid =
       parts.length === 4 &&
       parts.every(p => /^\d{1,3}$/.test(p) && Number(p) < 256);
-    return valid ? {family: 1, bytes: parts.map(Number)} : null;
+    return valid ? {family: FAMILY_IPV4, bytes: parts.map(Number)} : null;
   }
 
   const halves = ip.split('::');
@@ -38,7 +44,10 @@ function parseIp(ip: string): {family: number; bytes: number[]} | null {
   if (!groups.every(g => /^[0-9a-f]{1,4}$/i.test(g))) {
     return null;
   }
-  return {family: 2, bytes: groups.flatMap(g => u16(parseInt(g, 16)))};
+  return {
+    family: FAMILY_IPV6,
+    bytes: groups.flatMap(g => u16(parseInt(g, 16))),
+  };
 }
 
 /**
@@ -52,11 +61,9 @@ export function makeEcs(ip: string, prefix?: number): number[] | null {
   if (!address) {
     return null;
   }
-  const maxPrefix = address.family === 1 ? 32 : 128;
-  if (prefix === undefined) {
-    prefix = address.family === 1 ? 24 : 48;
-  }
-  if (!Number.isInteger(prefix) || prefix < 0 || prefix > maxPrefix) {
+  const {bits, prefix: defaultPrefix} = ECS_FAMILIES[address.family];
+  prefix ??= defaultPrefix;
+  if (!Number.isInteger(prefix) || prefix < 0 || prefix > bits) {
     return null;
   }
   return buildOption(address.family, address.bytes, prefix);
@@ -73,7 +80,7 @@ function buildOption(family: number, address: number[], prefix: number) {
     bytes[byteCount - 1] &= (0xff << (8 - partialBits)) & 0xff; // Zero the rest.
   }
   const data = [...u16(family), prefix, 0, ...bytes];
-  return [...u16(8), ...u16(data.length), ...data]; // Option code 8.
+  return [...u16(OPTION_ECS), ...u16(data.length), ...data];
 }
 
 /**
@@ -93,66 +100,39 @@ export function parseEcsParam(param: string): number[] | null {
  * Reads the client's own ECS option from a DNS query (as sent by dnsproxy or
  * AdGuard Home with `edns-addr`). The subnet is clamped to /24 (IPv4) or /48
  * (IPv6) to keep the cache effective and the client's privacy.
- * @param questionLength Length of the question section (`question.raw`).
  * @return The option bytes; null if there is none, or it is empty (a privacy
  *     signal such as Firefox's `::/0`, meaning "do not locate me").
  */
-export function clientEcs(
-  wire: Uint8Array,
-  questionLength: number
-): number[] | null {
+export function clientEcs(wire: Uint8Array): number[] | null {
   try {
-    const view = new DataView(wire.buffer, wire.byteOffset, wire.byteLength);
-    let offset = 12 + questionLength;
-    const records = view.getUint16(6) + view.getUint16(8) + view.getUint16(10);
-    for (let i = 0; i < records; i++) {
-      offset = skipName(wire, offset);
-      const type = view.getUint16(offset);
-      let rdata = offset + 10;
-      const end = rdata + view.getUint16(offset + 8);
-      if (end > wire.length) {
-        return null;
-      }
-      offset = end;
-      if (type !== 41) {
-        continue;
-      }
-      for (; rdata + 4 <= end;) {
-        const code = view.getUint16(rdata);
-        const length = view.getUint16(rdata + 2);
-        const data = wire.subarray(rdata + 4, rdata + 4 + length);
-        rdata += 4 + length;
-        if (code !== 8 || data.length < 4) {
-          continue;
-        }
-        const family = (data[0] << 8) | data[1];
-        const source = data[2];
-        const address = Array.from(data.subarray(4));
-        const maxBits = family === 1 ? 32 : 128;
-        const empty = source === 0 || address.every(b => b === 0);
-        if (
-          (family !== 1 && family !== 2) ||
-          source > maxBits ||
-          address.length !== Math.ceil(source / 8) ||
-          empty
-        ) {
-          return null;
-        }
-        const padded = [
-          ...address,
-          ...Array(maxBits / 8 - address.length).fill(0),
-        ];
-        return buildOption(
-          family,
-          padded,
-          Math.min(source, family === 1 ? 24 : 48)
-        );
-      }
+    const option = optOptions(wire).find(
+      o => o.code === OPTION_ECS && o.data.length >= 4
+    );
+    if (!option) {
+      return null;
     }
+    const {data} = option;
+    const family = (data[0] << 8) | data[1];
+    const source = data[2];
+    const address = Array.from(data.subarray(4));
+    const spec = ECS_FAMILIES[family];
+    const empty = source === 0 || address.every(b => b === 0);
+    if (
+      !spec ||
+      source > spec.bits ||
+      address.length !== Math.ceil(source / 8) ||
+      empty
+    ) {
+      return null;
+    }
+    const padded = [
+      ...address,
+      ...Array(spec.bits / 8 - address.length).fill(0),
+    ];
+    return buildOption(family, padded, Math.min(source, spec.prefix));
   } catch {
-    // Malformed: behave as if the client sent no ECS.
+    return null; // Malformed: behave as if the client sent no ECS.
   }
-  return null;
 }
 
 /**
@@ -164,7 +144,7 @@ export function reverseName(ip: string): string | null {
   if (!address) {
     return null;
   }
-  if (address.family === 1) {
+  if (address.family === FAMILY_IPV4) {
     return [...address.bytes].reverse().join('.') + '.in-addr.arpa';
   }
   const nibbles = address.bytes.flatMap(b => [b >> 4, b & 15]);

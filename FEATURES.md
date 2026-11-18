@@ -28,6 +28,7 @@ Every feature, the standard it follows, where it lives and which test covers it.
 | FORMERR for an invalid OPT (two OPTs, non-root owner, bad length) | RFC 6891 6.1.1 | `dns.ts`, `resolve.ts` | `dns.test.ts`, `resolve.test.ts` |
 | DDR (`_dns.resolver.arpa` SVCB, with the host's A/AAAA in additional); other `resolver.arpa` names get NODATA | RFC 9462, 9460 | `resolve.ts` | `resolve.test.ts` |
 | Best-effort ECH key for Cloudflare names (skipped with DO) | RFC 9460 (ECH draft) | `ech.ts` | `resolve.test.ts` |
+| Redirects: a name answered with another name's A/AAAA (`medium.com` -> `voz.vn`), HTTPS/SVCB NODATA | none | `config.ts`, `upstream.ts`, `local.ts` | `resolve.test.ts` |
 | Blocklist (Golomb-coded set, subdomains covered) | none | `blockset.ts`, `blocklist.ts` | `blockset.test.ts`, `blocking.test.ts` |
 | Blocklist build: list parsing, dedupe, regex drop | hosts / adblock syntax | `scripts/blocklist-lib.ts` | `blockset.test.ts` |
 | Regex block/allow rules (allow wins), safety checks | none | `regexlist.ts` | `rules.test.ts`, `blocking.test.ts` |

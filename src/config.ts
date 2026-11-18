@@ -1,8 +1,5 @@
 /** @fileoverview Tunable constants for the DoH gateway. */
 
-/** Whether to attach the client's subnet (EDNS Client Subnet) to queries. */
-export const ECS_ENABLED = true;
-
 /** Largest DNS message accepted, in bytes (same limit as Google). */
 export const MAX_QUERY = 512;
 
@@ -43,28 +40,21 @@ export const HEDGE_MAX_MS = 150;
 export const BLOCK_UNDELEGATED = true;
 
 /**
- * CDN redirects: the key resolves to the A/AAAA answers of the value.
- *
+ * Redirects: the exact name on the left is answered with the A/AAAA records of
+ * the name on the right (SVCB/HTTPS answer NODATA, other types are forwarded
+ * unchanged). Subdomains are not redirected.
  */
-export const REDIRECTS: Record<string, string> = {};
+export const REDIRECTS: Record<string, string> = {
+  'medium.com': 'voz.vn',
+};
 
-/**
- * Query types answered with an empty NODATA right away, saving an upstream
- * call. ANY is safe to refuse (RFC 8482); the others are off by default
- * because blocking them breaks things (IPv6, ECH and service hints).
- */
+/** Answer ANY with a minimal HINFO, saving an upstream call (RFC 8482). */
 export const BLOCK_ANY = true;
-export const BLOCK_AAAA = false;
-export const BLOCK_PTR = false;
-export const BLOCK_HTTPS = false;
 
-/** Best-effort ECH for Cloudflare-hosted sites (see ech.ts). */
-export const ECH_ENABLED = true;
 /** Name whose HTTPS record carries Cloudflare's shared ECH key. */
 export const ECH_FRONT_DOMAIN = 'cloudflare-ech.com';
 
 /** Domain blocklist built by `npm run build-lists` (see blocklist.ts). */
-export const BLOCKLIST_ENABLED = true;
 export const BLOCKLIST_PATH = '/blocklist.bin';
 /**
  * Build time: a name that is not listed is wrongly blocked with a probability
@@ -80,3 +70,26 @@ export const RULES_PATH = '/rules.json';
  * tracker hidden behind a first-party subdomain is blocked (CNAME uncloaking).
  */
 export const CNAME_UNCLOAK = true;
+
+/**
+ * Cloudflare's published IPv4 ranges (https://www.cloudflare.com/ips-v4):
+ * [first address, prefix length]. Used by ech.ts to tell Cloudflare-hosted
+ * names; check them against that list now and then.
+ */
+export const CLOUDFLARE_V4: Array<[string, number]> = [
+  ['173.245.48.0', 20],
+  ['103.21.244.0', 22],
+  ['103.22.200.0', 22],
+  ['103.31.4.0', 22],
+  ['141.101.64.0', 18],
+  ['108.162.192.0', 18],
+  ['190.93.240.0', 20],
+  ['188.114.96.0', 20],
+  ['197.234.240.0', 22],
+  ['198.41.128.0', 17],
+  ['162.158.0.0', 15],
+  ['104.16.0.0', 13],
+  ['104.24.0.0', 14],
+  ['172.64.0.0', 13],
+  ['131.0.72.0', 22],
+];

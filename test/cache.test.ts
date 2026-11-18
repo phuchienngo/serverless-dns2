@@ -21,6 +21,7 @@ import {
   makeResponse,
   mxRdata,
   parseMsg,
+  resetState,
   soaRdata,
 } from './helpers.js';
 
@@ -37,7 +38,10 @@ const answer = (ttl: number, name = 'a.test') =>
   });
 const ttlOf = (body: Uint8Array) => parseMsg(body).answer[0].ttl;
 
-beforeEach(() => mock.timers.enable({apis: ['Date'], now: START}));
+beforeEach(() => {
+  resetState();
+  mock.timers.enable({apis: ['Date'], now: START});
+});
 afterEach(() => {
   mock.timers.reset();
   mock.restoreAll();
@@ -45,6 +49,14 @@ afterEach(() => {
 const tick = (seconds: number) => mock.timers.tick(seconds * 1000);
 
 describe('local cache', () => {
+  test('resetState empties it', () => {
+    const key = uniqueKey();
+    store(undefined, key, {body: answer(300), ttl: 300});
+    assert.ok(lookupLocal(key, question()));
+    resetState();
+    assert.equal(lookupLocal(key, question()), null);
+  });
+
   test('misses until something is stored', () => {
     assert.equal(lookupLocal(uniqueKey(), question()), null);
   });

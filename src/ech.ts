@@ -5,7 +5,7 @@
  * Cloudflare and, if so, answer with an HTTPS record carrying that key.
  */
 
-import {ECH_ENABLED, ECH_FRONT_DOMAIN} from './config.js';
+import {CLOUDFLARE_V4, ECH_FRONT_DOMAIN} from './config.js';
 import {
   ALPN_HTTP,
   RCODE_NOERROR,
@@ -28,25 +28,6 @@ import {
   u16,
 } from './dns.js';
 import type {Question, Result} from './types.js';
-
-/** Cloudflare's published IPv4 ranges: [first address, prefix length]. */
-const CLOUDFLARE_V4: Array<[string, number]> = [
-  ['173.245.48.0', 20],
-  ['103.21.244.0', 22],
-  ['103.22.200.0', 22],
-  ['103.31.4.0', 22],
-  ['141.101.64.0', 18],
-  ['108.162.192.0', 18],
-  ['190.93.240.0', 20],
-  ['188.114.96.0', 20],
-  ['197.234.240.0', 22],
-  ['198.41.128.0', 17],
-  ['162.158.0.0', 15],
-  ['104.16.0.0', 13],
-  ['104.24.0.0', 14],
-  ['172.64.0.0', 13],
-  ['131.0.72.0', 22],
-];
 
 const ECH_CONFIG_TTL_MS = 3600 * 1000;
 const SYNTHETIC_TTL = 300;
@@ -88,6 +69,12 @@ function svcParam(resp: Uint8Array, rdata: number, end: number, key: number) {
 
 let echConfig: {value: Uint8Array; expires: number} | null = null;
 let echConfigLoading: Promise<Uint8Array | null> | null = null;
+
+/** Forgets the memoized ECH key (for tests). */
+export function resetEch(): void {
+  echConfig = null;
+  echConfigLoading = null;
+}
 
 async function loadEchConfig(ask: Ask): Promise<Uint8Array | null> {
   const question = [...encodeName(ECH_FRONT_DOMAIN), ...u16(TYPE_HTTPS), 0, 1];
@@ -148,14 +135,14 @@ export interface EchProbe {
 /**
  * Starts the lookups addEch may need: is the name on Cloudflare (an A query),
  * and the ECH key (usually already memoized).
- * @return null if `q` is not an HTTPS query or ECH is disabled.
+ * @return null if `q` is not an HTTPS query.
  */
 export function startEchProbe(
   q: Question,
   ecs: number[] | null,
   ask: Ask
 ): EchProbe | null {
-  if (!ECH_ENABLED || q.type !== TYPE_HTTPS) {
+  if (q.type !== TYPE_HTTPS) {
     return null;
   }
   return {
@@ -208,6 +195,6 @@ export async function addEch(
     const record = makeRecord(TYPE_HTTPS, SYNTHETIC_TTL, rdata);
     return {body: respond(q, RCODE_NOERROR, [record]), ttl: SYNTHETIC_TTL};
   } catch {
-    return result;
+    return result; // ECH is best effort: keep the answer as it is.
   }
 }

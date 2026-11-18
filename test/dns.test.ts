@@ -18,6 +18,7 @@ import {
   padResponse,
   alpnValue,
   makeQuestion,
+  optOptions,
   rcodeOf,
   svcbRdata,
   makeRecord,
@@ -727,5 +728,27 @@ describe('message helpers', () => {
     assert.equal(question.cd, true);
     assert.equal(question.ad, false);
     assert.equal(makeQuestion('a.test', T.A).dnssecOk, false);
+  });
+});
+
+describe('optOptions', () => {
+  test('lists the options of the OPT record with their data', () => {
+    const wire = makeQuery('a.test', T.A, {
+      ecs: {family: 1, prefix: 24, address: [1, 2, 3]},
+      padding: 4,
+    });
+    const options = optOptions(wire);
+    assert.deepEqual(
+      options.map(o => o.code),
+      [8, 12]
+    );
+    assert.deepEqual([...options[0].data], [0, 1, 24, 0, 1, 2, 3]);
+    assert.equal(options[1].data.length, 4);
+  });
+
+  test('is empty without OPT and throws when the records do not parse', () => {
+    assert.deepEqual(optOptions(makeQuery('a.test', T.A, {edns: false})), []);
+    const wire = makeQuery('a.test', T.A);
+    assert.throws(() => optOptions(wire.subarray(0, wire.length - 4)));
   });
 });

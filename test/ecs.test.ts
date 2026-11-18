@@ -2,7 +2,6 @@
 
 import assert from 'node:assert/strict';
 import {describe, test} from 'node:test';
-import {parseQuestion} from '../src/dns.js';
 import {clientEcs, makeEcs, parseEcsParam, reverseName} from '../src/ecs.js';
 import {T, ip4, makeQuery} from './helpers.js';
 
@@ -101,7 +100,7 @@ describe('parseEcsParam (the JSON API parameter)', () => {
 describe('clientEcs (an ECS option sent by the client)', () => {
   const read = (opts: Parameters<typeof makeQuery>[2]) => {
     const wire = makeQuery('a.test', T.A, opts);
-    return clientEcs(wire, parseQuestion(wire).raw.length);
+    return clientEcs(wire);
   };
 
   test('honours the client subnet', () => {
@@ -160,18 +159,12 @@ describe('clientEcs (an ECS option sent by the client)', () => {
       })
     );
     wire[wire.length - 5] = 32; // source prefix 32, but only three bytes follow
-    assert.equal(clientEcs(wire, parseQuestion(wire).raw.length), null);
+    assert.equal(clientEcs(wire), null);
   });
 
   test('copes with a damaged message', () => {
     const wire = makeQuery('a.test', T.A);
-    assert.equal(
-      clientEcs(
-        wire.subarray(0, wire.length - 6),
-        parseQuestion(wire).raw.length
-      ),
-      null
-    );
+    assert.equal(clientEcs(wire.subarray(0, wire.length - 6)), null);
   });
 });
 

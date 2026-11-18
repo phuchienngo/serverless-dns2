@@ -11,14 +11,8 @@ import {
   STALE_MAX_S,
   STALE_TTL,
 } from './config.js';
-import {
-  HEADER_BYTES,
-  parseAdditional,
-  parseAnswers,
-  parseAuthority,
-  rcodeOf,
-  u16,
-} from './dns.js';
+import {TYPE_OPT} from './constants.js';
+import {HEADER_BYTES, rcodeOf, readRecords, u16} from './dns.js';
 import type {Question, Result} from './types.js';
 
 /** A cached response. `storedAt` is in milliseconds, `ttl` in seconds. */
@@ -47,6 +41,10 @@ class LruCache {
 
   /**
    */
+  clear(): void {
+    this.entries.clear();
+  }
+
   put(key: string, entry: Entry): void {
     this.entries.delete(key);
     this.entries.set(key, entry);
@@ -60,6 +58,11 @@ class LruCache {
 }
 
 const localCache = new LruCache(LOCAL_CACHE_SIZE);
+
+/** Empties the memory cache (for tests). */
+export function resetCache(): void {
+  localCache.clear();
+}
 
 /** A cached answer for a question; `refresh` asks the caller to renew it. */
 export interface Hit {
@@ -113,15 +116,13 @@ function serve(entry: Entry, q: Question, now: number): Hit | null {
   body.set(q.raw, HEADER_BYTES); // Same length as stored; restores the client's case.
   try {
     const view = new DataView(body.buffer);
-    for (const record of [
-      ...parseAnswers(body),
-      ...parseAuthority(body),
-      ...parseAdditional(body),
-    ]) {
-      view.setUint32(record.start + 4, remaining);
+    for (const record of readRecords(body)) {
+      if (record.type !== TYPE_OPT) {
+        view.setUint32(record.start + 4, remaining); // OPT has no TTL.
+      }
     }
   } catch {
-    return null;
+    return null; // An entry that does not parse is treated as a miss.
   }
   return {
     result: {

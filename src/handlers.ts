@@ -50,6 +50,26 @@ function wireResponse(
   return new Response(result.body, {headers});
 }
 
+/** The options for resolving a request to `url`, with room for Server-Timing. */
+function makeOptions(url: URL, ctx: Context): ResolveOptions {
+  return {...ctx, host: url.hostname, timing: {}};
+}
+
+/**
+ * Resolves a question; if the upstream resolver cannot be reached the answer
+ * is a SERVFAIL, not an HTTP error.
+ */
+async function resolveOrFail(
+  question: Question,
+  options: ResolveOptions
+): Promise<Result> {
+  try {
+    return await resolve(question, options);
+  } catch {
+    return upstreamFailure(question); // Upstream down, timed out or unreadable.
+  }
+}
+
 /**
  * Decodes the `dns` query parameter of a GET request.
  * @param param base64url, with or without padding.
@@ -98,6 +118,7 @@ export async function handle(
       wire = decodeDnsParam(param);
     }
   } catch {
+    // A body that cannot be read, or a `dns` parameter that is not base64url.
     return textResponse('bad request', 400);
   }
 
@@ -105,26 +126,19 @@ export async function handle(
   try {
     question = parseQuestion(wire);
   } catch {
+    // Not a well-formed single-question query.
     return textResponse('bad dns message', 400);
   }
 
   // Honour a subnet the client chose itself; an empty one (privacy signal)
   // is ignored, so the connecting IP is used.
-  const ecs = clientEcs(wire, question.raw.length);
-  const timing: Record<string, number> = {};
-  const options: ResolveOptions = {
-    ...ctx,
-    host: url.hostname,
-    timing,
-  };
+  const options = makeOptions(url, ctx);
+  const ecs = clientEcs(wire);
   if (ecs) {
     options.ecs = ecs;
   }
-  try {
-    return wireResponse(await resolve(question, options), timing);
-  } catch {
-    return wireResponse(upstreamFailure(question));
-  }
+  const result = await resolveOrFail(question, options);
+  return wireResponse(result, options.timing);
 }
 
 /**
@@ -192,11 +206,7 @@ export async function handleJson(
     return textResponse('invalid name', 400);
   }
 
-  const options: ResolveOptions = {
-    ...ctx,
-    host: url.hostname,
-    timing: {},
-  };
+  const options = makeOptions(url, ctx);
   const subnet = params.get('edns_client_subnet');
   if (subnet) {
     options.ecs = parseEcsParam(subnet);
@@ -210,12 +220,7 @@ export async function handleJson(
     cd: flag(params, 'cd'),
   });
 
-  let result;
-  try {
-    result = await resolve(question, options);
-  } catch {
-    result = upstreamFailure(question);
-  }
+  const result = await resolveOrFail(question, options);
   if (params.get('ct') === 'application/dns-message') {
     return wireResponse(result, options.timing);
   }
@@ -224,6 +229,7 @@ export async function handleJson(
   try {
     json = toJson(result.body);
   } catch {
+    // The upstream sent something that does not parse.
     json = {
       Status: 2,
       TC: false,

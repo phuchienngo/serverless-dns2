@@ -6,7 +6,6 @@
 import {lookupLocal, lookupShared, store} from './cache.js';
 import {blockReason, nxdomain, uncloak} from './blocking.js';
 import {getBlocklist, isReady} from './blocklist.js';
-import {BLOCKLIST_ENABLED, ECS_ENABLED} from './config.js';
 import {
   EDE_NETWORK_ERROR,
   EDE_STALE_ANSWER,
@@ -130,9 +129,6 @@ async function resolveQuestion(
   if (isDdr(q, host)) {
     return ddrResult(q, options);
   }
-  if (!BLOCKLIST_ENABLED) {
-    return answer(q, options);
-  }
 
   if (isReady()) {
     const reason = blockReason(q.name);
@@ -143,7 +139,7 @@ async function resolveQuestion(
   // loads, and discard the answer if the name turns out to be listed.
   const loading = getBlocklist(env, host, options.timing);
   const answering = answer(q, options);
-  answering.catch(() => {});
+  answering.catch(() => {}); // Its failure is reported if it is used below.
   await loading;
   const reason = blockReason(q.name);
   return reason ? nxdomain(q, reason) : uncloak(q, await answering);
@@ -165,7 +161,7 @@ async function answer(q: Question, options: ResolveOptions): Promise<Result> {
   let ecs = null;
   if (options.ecs !== undefined) {
     ecs = options.ecs;
-  } else if (ECS_ENABLED && options.ip) {
+  } else if (options.ip) {
     ecs = makeEcs(options.ip);
   }
 
@@ -183,6 +179,7 @@ async function answer(q: Question, options: ResolveOptions): Promise<Result> {
     return result;
   };
   const refreshInBackground = () => {
+    // A failed refresh leaves the old entry to be served; nobody waits for it.
     const refreshing = fetchFresh().catch(() => {});
     waitUntil?.(refreshing);
   };
@@ -202,8 +199,8 @@ async function answer(q: Question, options: ResolveOptions): Promise<Result> {
   //    The upstream call always finishes, so it renews the cache either way.
   const started = performance.now();
   const fetching = fetchFresh();
-  waitUntil?.(fetching.catch(() => {}));
-  const shared = lookupShared(cache, key, q).catch(() => null);
+  waitUntil?.(fetching.catch(() => {})); // Failure is handled where it is awaited.
+  const shared = lookupShared(cache, key, q).catch(() => null); // A miss.
   const first = await Promise.race([
     shared.then(hit => hit?.result ?? null),
     fetching.catch(() => null),

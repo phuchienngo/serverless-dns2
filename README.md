@@ -19,7 +19,7 @@ then set `dns_ddr_version 1` and `networkmonitor_async_privdns_resolution 1` via
 ## Extras
 
 - Honours a client-supplied ECS (dnsproxy / AdGuard Home `edns-addr`); empty subnets such as `::/0` are ignored.
-- `BLOCK_ANY/AAAA/PTR/HTTPS` in `src/config.ts` answer those query types with NODATA locally.
+- `ANY` queries get a minimal HINFO locally (`BLOCK_ANY`); `REDIRECTS` in `src/config.ts` answers a name with another name's A/AAAA records (now `medium.com` -> `voz.vn`).
 - `/resolve?name=8.8.8.8&type=PTR` converts an IP to its reverse name.
 - The DO and CD bits of a query are passed to the upstream (DNSSEC records and `AD` come back as asked; a query with AD but no DO also gets `AD`). Answers made
   locally (blocked names, NODATA) carry a made-up SOA so clients can cache them (RFC 2308), and an OPT record only if the

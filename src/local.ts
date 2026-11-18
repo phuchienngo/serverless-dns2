@@ -4,14 +4,7 @@
  * names, ANY).
  */
 
-import {
-  BLOCK_AAAA,
-  BLOCK_ANY,
-  BLOCK_HTTPS,
-  BLOCK_PTR,
-  BLOCK_UNDELEGATED,
-  REDIRECTS,
-} from './config.js';
+import {BLOCK_ANY, BLOCK_UNDELEGATED, REDIRECTS} from './config.js';
 import {
   ALPN_HTTP,
   CLASS_IN,
@@ -33,7 +26,6 @@ import {
   TYPE_ANY,
   TYPE_HINFO,
   TYPE_HTTPS,
-  TYPE_PTR,
   TYPE_SVCB,
 } from './constants.js';
 import {
@@ -50,14 +42,6 @@ const encoder = new TextEncoder();
 
 const FORMERR_TYPES = new Set(TYPES_FORMERR);
 const NOTIMP_TYPES = new Set(TYPES_NOTIMP);
-
-/** Types refused locally with NODATA (see config.ts). */
-const BLOCKED_TYPES = new Set<number>([
-  ...(BLOCK_ANY ? [TYPE_ANY] : []),
-  ...(BLOCK_AAAA ? [TYPE_AAAA] : []),
-  ...(BLOCK_PTR ? [TYPE_PTR] : []),
-  ...(BLOCK_HTTPS ? [TYPE_HTTPS] : []),
-]);
 
 /**
  * Builds the Discovery of Designated Resolvers answer (RFC 9462).
@@ -161,26 +145,15 @@ export function localAnswer(q: Question, host: string): Result | null {
 }
 
 /**
- * Answers query types that the gateway does not forward (see config.ts), and
- * HTTPS/SVCB queries for redirected names.
+ * Answers ANY (see config.ts), and HTTPS/SVCB queries for redirected names.
  * @return Null if the question is forwarded.
  */
 export function typeAnswer(q: Question): Result | null {
-  if (BLOCKED_TYPES.has(q.type)) {
-    if (q.type === TYPE_ANY) {
-      // RFC 8482: a minimal HINFO answer.
-      const text = [...encoder.encode('RFC8482')];
-      const hinfo = makeRecord(TYPE_HINFO, TTL_LOCAL, [
-        text.length,
-        ...text,
-        0,
-      ]);
-      return {body: respond(q, RCODE_NOERROR, [hinfo]), ttl: TTL_LOCAL};
-    }
-    return {
-      body: respondNegative(q, RCODE_NOERROR, TTL_LOCAL),
-      ttl: TTL_LOCAL,
-    };
+  if (BLOCK_ANY && q.type === TYPE_ANY) {
+    // RFC 8482: a minimal HINFO answer.
+    const text = [...encoder.encode('RFC8482')];
+    const hinfo = makeRecord(TYPE_HINFO, TTL_LOCAL, [text.length, ...text, 0]);
+    return {body: respond(q, RCODE_NOERROR, [hinfo]), ttl: TTL_LOCAL};
   }
   if (REDIRECTS[q.name] && (q.type === TYPE_SVCB || q.type === TYPE_HTTPS)) {
     // Service hints would reveal the original IPs: answer NODATA.

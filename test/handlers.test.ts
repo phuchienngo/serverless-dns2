@@ -10,6 +10,7 @@ import {
   makeResponse,
   mockUpstream,
   parseMsg,
+  resetState,
 } from './helpers.js';
 
 const ctx = {env: {}, ip: null} as never;
@@ -19,6 +20,7 @@ let n = 0;
 const fresh = () => `h${n++}.handlers.example.com`;
 
 beforeEach(() => {
+  resetState();
   upstream = mockUpstream(q =>
     makeResponse({
       qname: q.question[0].name,

@@ -6,6 +6,10 @@
 
 import {mock} from 'node:test';
 import {UPSTREAM} from '../src/config.js';
+import {resetBlocklist} from '../src/blocklist.js';
+import {resetCache} from '../src/cache.js';
+import {resetEch} from '../src/ech.js';
+import {resetUpstream} from '../src/upstream.js';
 
 export const T = {
   A: 1,
@@ -431,4 +435,12 @@ export function mockUpstream(
 /** Request options for `resolve()` with no assets and no client IP. */
 export function plainOptions(extra: Record<string, unknown> = {}) {
   return {env: {}, ip: null, host: 'dns.test', ...extra} as never;
+}
+
+/** Forgets everything that the gateway keeps in memory between requests. */
+export function resetState(): void {
+  resetCache();
+  resetUpstream();
+  resetEch();
+  resetBlocklist();
 }
