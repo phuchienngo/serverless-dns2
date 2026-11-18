@@ -25,6 +25,8 @@ export interface Question {
   ednsVersion: number;
   /** Whether the query has an EDNS Padding option (RFC 7830). */
   padding: boolean;
+  /** The OPT record is invalid (RFC 6891 6.1.1): answer FORMERR. */
+  malformed: boolean;
 }
 
 /** An answer ready to send back to the client. */

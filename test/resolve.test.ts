@@ -120,6 +120,28 @@ describe('answers made locally (no upstream call)', () => {
     assert.equal(upstream.calls[0].query.question[0].cls, 1);
   });
 
+  test('an invalid OPT record gets FORMERR and is not forwarded', async () => {
+    const base = Uint8Array.from(makeQuery(fresh(), T.A));
+    base[base.length - 1] = 50; // RDLEN past the end
+    const result = await resolve(parseQuestion(base), plainOptions());
+    assert.equal(parseMsg(result.body).rcode, 1);
+    assert.equal(upstream.calls.length, 0);
+  });
+
+  test('QTYPEs 0, OPT, TKEY and TSIG get FORMERR', async () => {
+    for (const type of [0, 41, 249, 250]) {
+      assert.equal((await ask(fresh(), type)).msg.rcode, 1, `type ${type}`);
+    }
+    assert.equal(upstream.calls.length, 0);
+  });
+
+  test('zone transfers and MAILB/MAILA get NOTIMP', async () => {
+    for (const type of [251, 252, 253, 254]) {
+      assert.equal((await ask(fresh(), type)).msg.rcode, 4, `type ${type}`);
+    }
+    assert.equal(upstream.calls.length, 0);
+  });
+
   test('a non-QUERY opcode gets NOTIMP, with the opcode echoed', async () => {
     const {msg} = await ask(fresh(), T.A, {opcode: 4});
     assert.equal(msg.rcode, 4);

@@ -123,6 +123,35 @@ describe('parseQuestion (RFC 1035 4.1)', () => {
     assert.throws(() => parseQuestion(good.subarray(0, good.length - 3)));
   });
 
+  test('flags an invalid OPT record as malformed (RFC 6891 6.1.1)', () => {
+    const base = makeQuery('a.test', T.A);
+    const at = base.length - 11; // The OPT record has no options here.
+    assert.equal(parseQuestion(base).malformed, false);
+    assert.equal(q('a.test', T.A, {padding: 8, do: true}).malformed, false);
+    assert.equal(q('a.test', T.A, {edns: false}).malformed, false);
+
+    const two = Uint8Array.from([...base, ...base.subarray(at)]);
+    two[11] = 2;
+    assert.equal(parseQuestion(two).malformed, true, 'two OPT records');
+
+    const named = Uint8Array.from([
+      ...base.subarray(0, at),
+      1,
+      97,
+      0,
+      ...base.subarray(at + 1),
+    ]);
+    assert.equal(parseQuestion(named).malformed, true, 'owner is not the root');
+
+    const overrun = Uint8Array.from(base);
+    overrun[overrun.length - 1] = 50;
+    assert.equal(parseQuestion(overrun).malformed, true, 'RDLEN past the end');
+
+    const odd = Uint8Array.from(makeQuery('a.test', T.A, {padding: 8}));
+    odd[odd.length - 13] += 1; // The padding option claims one byte more.
+    assert.equal(parseQuestion(odd).malformed, true, 'option overruns RDATA');
+  });
+
   test('ignores a damaged additional section (treated as no EDNS)', () => {
     const wire = Uint8Array.from(makeQuery('a.test', T.A, {edns: false}));
     wire[11] = 3; // ARCOUNT says 3 records, there are none

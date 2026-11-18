@@ -222,6 +222,7 @@ export async function handleJson(
     opcode: 0,
     ednsVersion: 0,
     padding: false,
+    malformed: false,
   };
 
   let result;

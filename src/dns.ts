@@ -100,6 +100,7 @@ export function parseQuestion(buf: Uint8Array): Question {
     opcode: (buf[2] >> 3) & 15,
     ednsVersion: opt?.version ?? 0,
     padding: opt?.padding ?? false,
+    malformed: opt?.malformed ?? false,
   };
 }
 
@@ -112,28 +113,51 @@ export function parseQuestion(buf: Uint8Array): Question {
 function findOpt(
   buf: Uint8Array,
   offset: number
-): {flags: number; version: number; padding: boolean} | null {
+): {
+  flags: number;
+  version: number;
+  padding: boolean;
+  malformed: boolean;
+} | null {
   try {
     const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
     const records = view.getUint16(6) + view.getUint16(8) + view.getUint16(10);
+    let found: {
+      flags: number;
+      version: number;
+      padding: boolean;
+      malformed: boolean;
+    } | null = null;
     for (let i = 0; i < records; i++) {
+      const start = offset;
       offset = skipName(buf, offset);
       const length = view.getUint16(offset + 8);
       if (view.getUint16(offset) === 41) {
+        // RFC 6891 6.1.1: one OPT record, owned by the root, whose options
+        // fill its RDATA exactly.
+        let malformed: boolean = found !== null || offset - start !== 1;
         let padding = false;
         const end = offset + 10 + length;
-        for (let at = offset + 10; at + 4 <= end;) {
+        let at = offset + 10;
+        for (
+          ;
+          end <= buf.length && at + 4 <= end;
+          at += 4 + view.getUint16(at + 2)
+        ) {
           padding ||= view.getUint16(at) === OPTION_PADDING;
-          at += 4 + view.getUint16(at + 2);
         }
-        return {
+        malformed ||= end > buf.length || at !== end;
+        found ??= {
           flags: view.getUint16(offset + 6),
           version: buf[offset + 5],
           padding,
+          malformed,
         };
+        found.malformed ||= malformed;
       }
       offset += 10 + length;
     }
+    return found;
   } catch {
     // A damaged record section: treat the query as having no EDNS.
   }

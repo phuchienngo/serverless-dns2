@@ -54,6 +54,11 @@ import {isUndelegated} from './undelegated.js';
 
 const encoder = new TextEncoder();
 
+/** QTYPEs that must not be queried: 0 (RFC 6895), OPT (RFC 6891), TKEY, TSIG. */
+const FORMERR_TYPES = new Set([0, 41, 249, 250]);
+/** Zone transfers and the obsolete MAILB/MAILA: not served by a recursor. */
+const NOTIMP_TYPES = new Set([251, 252, 253, 254]);
+
 /** Types refused locally with NODATA (see config.ts). */
 const BLOCKED_TYPES = new Set<number>([
   ...(BLOCK_ANY ? [TYPE_ANY] : []),
@@ -309,11 +314,20 @@ async function resolveQuestion(
 ): Promise<Result> {
   const {env, host} = options;
 
+  if (q.malformed) {
+    return {body: respond(q, 1, []), ttl: 0}; // FORMERR (RFC 6891 6.1.1).
+  }
   if (q.opcode !== 0) {
     return {body: respond(q, 4, []), ttl: 0}; // NOTIMP.
   }
   if (q.ednsVersion > 0) {
     return {body: respond(q, 16, []), ttl: 0}; // BADVERS (RFC 6891).
+  }
+  if (FORMERR_TYPES.has(q.type)) {
+    return {body: respond(q, 1, []), ttl: 0};
+  }
+  if (NOTIMP_TYPES.has(q.type)) {
+    return {body: respond(q, 4, []), ttl: 0};
   }
   if (q.raw[q.raw.length - 2] !== 0 || q.raw[q.raw.length - 1] !== 1) {
     // Only class IN is served; the cache key has no class.
