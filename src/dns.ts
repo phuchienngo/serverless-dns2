@@ -91,6 +91,7 @@ export function parseQuestion(buf: Uint8Array): Question {
     name: lowerAscii(labels.join('.')),
     type: view.getUint16(offset),
     raw: Array.from(buf.subarray(12, offset + 4)),
+    edns: view.getUint16(10) > 0,
   };
 }
 
@@ -123,15 +124,22 @@ export function buildQuery(
   return new Uint8Array([...header, ...question, ...opt]);
 }
 
+/** Extended DNS Error codes (RFC 8914) used for blocked names. */
+export const EDE_BLOCKED = 15;
+
 /**
  * Builds a response message for the given question.
  * @param records Resource records, already encoded.
+ * @param ede Extended DNS Error (RFC 8914) to attach, if the client sent an
+ *     OPT record: an info code and a short text.
  */
 export function respond(
   q: Question,
   rcode: number,
-  records: number[][]
+  records: number[][],
+  ede?: {code: number; text: string}
 ): Uint8Array {
+  const opt = ede && q.edns ? edeRecord(ede.code, ede.text) : [];
   const header = [
     ...u16(q.id),
     0x81, // QR, RD.
@@ -142,9 +150,27 @@ export function respond(
     0,
     0,
     0,
-    0, // No authority or additional records.
+    opt.length ? 1 : 0, // Additional records: the OPT record.
   ];
-  return new Uint8Array([...header, ...q.raw, ...records.flat()]);
+  return new Uint8Array([...header, ...q.raw, ...records.flat(), ...opt]);
+}
+
+/** An OPT record carrying one Extended DNS Error option. */
+function edeRecord(code: number, text: string): number[] {
+  const bytes = encoder.encode(text);
+  const option = [...u16(15), ...u16(2 + bytes.length), ...u16(code), ...bytes];
+  return [
+    0, // Root name.
+    0,
+    41, // Type OPT.
+    ...u16(1232), // UDP payload size.
+    0,
+    0,
+    0,
+    0, // Extended RCODE, version, flags.
+    ...u16(option.length),
+    ...option,
+  ];
 }
 
 /**

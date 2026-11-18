@@ -6,7 +6,14 @@
 import {mkdir, readFile, writeFile} from 'node:fs/promises';
 import {dirname, join} from 'node:path';
 import {parse} from 'yaml';
-import {HEADER_WORDS, HASH_WORDS, MAGIC, hashDomain} from '../src/blockset.js';
+import {
+  HEADER_BYTES,
+  MAGIC,
+  decodeBlockset,
+  hashDomain,
+  isBlocked,
+} from '../src/blockset.js';
+import {BLOCKLIST_PRECISION_BITS} from '../src/config.js';
 import {
   checkPattern,
   compilePatterns,
@@ -60,8 +67,12 @@ async function readSource(source: string): Promise<string> {
   return response.text();
 }
 
-function buildHashes(domains: Set<string>): Uint32Array {
-  const entries: Array<{name: string; hash: [number, number]}> = [];
+/**
+ * Encodes the domains as a Golomb-coded set (see src/blockset.ts) and checks
+ * that every domain can be found in the decoded result.
+ */
+function buildBlockset(domains: Set<string>, k: number): Uint8Array {
+  const kept: string[] = [];
   for (const domain of domains) {
     let covered = false;
     for (
@@ -75,24 +86,68 @@ function buildHashes(domains: Set<string>): Uint32Array {
       }
     }
     if (!covered) {
-      entries.push({name: domain, hash: hashDomain(domain)});
+      kept.push(domain);
     }
   }
-  entries.sort((a, b) => a.hash[0] - b.hash[0] || a.hash[1] - b.hash[1]);
-  const words = new Uint32Array(HEADER_WORDS + entries.length * HASH_WORDS);
-  words[0] = MAGIC;
-  words[1] = entries.length;
-  entries.forEach((entry, i) => {
-    if (
-      i > 0 &&
-      entry.hash[0] === entries[i - 1].hash[0] &&
-      entry.hash[1] === entries[i - 1].hash[1]
-    ) {
-      throw new Error(`hash collision: ${entries[i - 1].name}, ${entry.name}`);
+  const bits = Math.ceil(Math.log2(Math.max(kept.length, 1))) + k;
+  if (bits > 53) {
+    throw new Error(`blocklist too large for ${k} precision bits`);
+  }
+  const values = [...new Set(kept.map(d => hashDomain(d, bits)))].sort(
+    (x, y) => x - y
+  );
+
+  const header = new Uint8Array(HEADER_BYTES);
+  const view = new DataView(header.buffer);
+  view.setUint32(0, MAGIC, true);
+  view.setUint32(4, values.length, true);
+  header[8] = k;
+  header[9] = bits;
+  const body: number[] = [];
+  let current = 0;
+  let filled = 0;
+  const put = (bit: number) => {
+    current = (current << 1) | bit;
+    if (++filled === 8) {
+      body.push(current);
+      current = 0;
+      filled = 0;
     }
-    words.set(entry.hash, HEADER_WORDS + i * HASH_WORDS);
-  });
-  return words;
+  };
+  let prev = 0;
+  for (const value of values) {
+    const gap = value - prev;
+    prev = value;
+    const quotient = Math.floor(gap / 2 ** k);
+    const remainder = gap - quotient * 2 ** k;
+    for (let i = 0; i < quotient; i++) {
+      put(1);
+    }
+    put(0);
+    for (let i = k - 1; i >= 0; i--) {
+      put(Math.floor(remainder / 2 ** i) % 2);
+    }
+  }
+  while (filled !== 0) {
+    put(0);
+  }
+  const out = new Uint8Array(HEADER_BYTES + body.length);
+  out.set(header);
+  out.set(body, HEADER_BYTES);
+
+  const decoded = decodeBlockset(out.buffer);
+  if (
+    decoded.bits !== bits ||
+    decoded.values.length !== values.length ||
+    values.some((v, i) => decoded.values[i] !== v) ||
+    kept.some(domain => !isBlocked(decoded, domain))
+  ) {
+    throw new Error('blocklist does not decode to what was encoded');
+  }
+  console.log(
+    `${kept.length} domains -> ${values.length} hashes of ${bits} bits`
+  );
+  return out;
 }
 
 async function main() {
@@ -164,17 +219,15 @@ async function main() {
     console.warn('warning: no domains; the blocklist will be empty');
   }
 
-  const hashes = buildHashes(domains);
+  const blockset = buildBlockset(domains, BLOCKLIST_PRECISION_BITS);
   // Written last, so a failed source leaves the previous files untouched.
   await mkdir(dirname(outPath), {recursive: true});
   await writeFile(
     join(dirname(outPath), 'rules.json'),
     JSON.stringify({block: block.patterns, allow: allowPatterns})
   );
-  await writeFile(outPath, new Uint8Array(hashes.buffer));
-  console.log(
-    `${domains.size} domains -> ${hashes[1]} hashes, ${hashes.byteLength} bytes -> ${outPath}`
-  );
+  await writeFile(outPath, blockset);
+  console.log(`${blockset.byteLength} bytes -> ${outPath}`);
 }
 
 main().catch(error => {

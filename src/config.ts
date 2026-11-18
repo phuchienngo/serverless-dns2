@@ -161,6 +161,12 @@ export const ECH_FRONT_DOMAIN = 'cloudflare-ech.com';
 /** Domain blocklist built by `npm run build-lists` (see blocklist.ts). */
 export const BLOCKLIST_ENABLED = true;
 export const BLOCKLIST_PATH = '/blocklist.bin';
+/**
+ * Build time: a name that is not listed is wrongly blocked with a probability
+ * of about 2^-this per suffix looked up. Each extra bit costs about one more
+ * bit per listed domain in the file.
+ */
+export const BLOCKLIST_PRECISION_BITS = 20;
 /** Regex block/allow rules built from blocklists.yaml (see regexlist.ts). */
 export const RULES_PATH = '/rules.json';
 

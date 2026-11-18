@@ -27,6 +27,7 @@ import {
 import {
   buildQuery,
   cnameTargets,
+  EDE_BLOCKED,
   encodeName,
   minTtl,
   parseAnswers,
@@ -275,13 +276,15 @@ export async function resolve(
       const answering = answer(q, options);
       answering.catch(() => {});
       await loading;
-      if (blocked(q.name)) {
-        return {body: respond(q, 3, []), ttl: 300}; // NXDOMAIN.
+      const reason = blockReason(q.name);
+      if (reason) {
+        return nxdomain(q, reason);
       }
       return uncloak(q, await answering);
     }
-    if (blocked(q.name)) {
-      return {body: respond(q, 3, []), ttl: 300}; // NXDOMAIN.
+    const reason = blockReason(q.name);
+    if (reason) {
+      return nxdomain(q, reason);
     }
     return uncloak(q, await answer(q, options));
   }
@@ -290,16 +293,27 @@ export async function resolve(
 }
 
 /**
- * @return Whether the name is blocked: an allow rule wins, then the blocklist
- *     (name or a parent domain) and the regex block rules.
+ * @return Why the name is blocked, or null if it is not: an allow rule wins,
+ *     then the blocklist (name or a parent domain) and the regex block rules.
  */
-function blocked(name: string): boolean {
+function blockReason(name: string): string | null {
   const {block, allow} = peekRules();
   if (allow?.test(name)) {
-    return false;
+    return null;
   }
   const hashes = peekBlocklist();
-  return (!!hashes && isBlocked(hashes, name)) || !!block?.test(name);
+  if (hashes && isBlocked(hashes, name)) {
+    return 'blocklist';
+  }
+  return block?.test(name) ? 'regex rule' : null;
+}
+
+/** NXDOMAIN with an Extended DNS Error saying the name was blocked. */
+function nxdomain(q: Question, reason: string): Result {
+  return {
+    body: respond(q, 3, [], {code: EDE_BLOCKED, text: reason}),
+    ttl: 300,
+  };
 }
 
 /**
@@ -309,12 +323,13 @@ function blocked(name: string): boolean {
  * so newer rules apply to cached answers too.
  */
 function uncloak(q: Question, result: Result): Result {
-  if (
-    CNAME_UNCLOAK &&
-    !peekRules().allow?.test(q.name) &&
-    cnameTargets(result.body).some(blocked)
-  ) {
-    return {body: respond(q, 3, []), ttl: 300};
+  if (!CNAME_UNCLOAK || peekRules().allow?.test(q.name)) {
+    return result;
+  }
+  for (const target of cnameTargets(result.body)) {
+    if (blockReason(target)) {
+      return nxdomain(q, `CNAME target ${target} is blocked`);
+    }
   }
   return result;
 }

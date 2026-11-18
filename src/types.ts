@@ -10,6 +10,8 @@ export interface Question {
   name: string;
   type: number;
   raw: number[];
+  /** Whether the query carried an EDNS (OPT) record. */
+  edns: boolean;
 }
 
 /** An answer ready to send back to the client. */

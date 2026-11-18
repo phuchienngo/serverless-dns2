@@ -5,7 +5,7 @@
 
 import {BLOCKLIST_PATH, RULES_PATH} from './config.js';
 import {compilePatterns} from './regexlist.js';
-import {HASH_WORDS, HEADER_WORDS, MAGIC} from './blockset.js';
+import {decodeBlockset, type BlockSet} from './blockset.js';
 import type {Env} from './types.js';
 
 /** Compiled regex rules; `allow` always wins over `block` and the blocklist. */
@@ -16,14 +16,14 @@ export interface Rules {
 
 const RETRY_DELAY_MS = 60 * 1000;
 
-let hashes: Uint32Array | null = null;
+let hashes: BlockSet | null = null;
 let rules: Rules = {block: null, allow: null};
 /** True once both files loaded; until then each request retries (rate-limited). */
 let ready = false;
 let loading: Promise<void> | null = null;
 let retryAt = 0;
 /** Durations of the most recent load, in ms. */
-let lastLoad = {asset: 0, body: 0};
+let lastLoad = {asset: 0, body: 0, decode: 0};
 
 /** Loads the regex rules; null if they could not be loaded. */
 async function fetchRules(env: Env, host: string): Promise<Rules | null> {
@@ -46,10 +46,7 @@ async function fetchRules(env: Env, host: string): Promise<Rules | null> {
 }
 
 /** Loads the hash blocklist; null if it could not be loaded. */
-async function fetchBlockset(
-  env: Env,
-  host: string
-): Promise<Uint32Array | null> {
+async function fetchBlockset(env: Env, host: string): Promise<BlockSet | null> {
   try {
     const t0 = performance.now();
     const response = await env.ASSETS!.fetch(
@@ -60,19 +57,10 @@ async function fetchBlockset(
       throw new Error(`blocklist ${response.status}`);
     }
     const buffer = await response.arrayBuffer();
-    lastLoad = {asset: t1 - t0, body: performance.now() - t1};
-    if (buffer.byteLength % 4 !== 0) {
-      throw new Error('bad blocklist length');
-    }
-    const words = new Uint32Array(buffer);
-    if (
-      words[0] !== MAGIC ||
-      words.length !== HEADER_WORDS + words[1] * HASH_WORDS
-    ) {
-      // Pages may answer a missing file with index.html; old assets are invalid.
-      throw new Error('not a blocklist');
-    }
-    return words;
+    const t2 = performance.now();
+    const set = decodeBlockset(buffer);
+    lastLoad = {asset: t1 - t0, body: t2 - t1, decode: performance.now() - t2};
+    return set;
   } catch {
     return null;
   }
@@ -103,7 +91,7 @@ export function isReady(): boolean {
  * @return What is loaded so far: the hash blocklist (null if none) and the
  *     regex rules.
  */
-export function peekBlocklist(): Uint32Array | null {
+export function peekBlocklist(): BlockSet | null {
   return hashes;
 }
 
@@ -133,5 +121,6 @@ export async function getBlocklist(
     timing.block = performance.now() - start;
     timing.asset = lastLoad.asset;
     timing.body = lastLoad.body;
+    timing.decode = lastLoad.decode;
   }
 }

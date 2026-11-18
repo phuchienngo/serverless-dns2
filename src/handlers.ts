@@ -210,6 +210,7 @@ export async function handleJson(
     name: lowerAscii(name.replace(/\.$/, '')),
     type,
     raw: [...encodeName(name), ...u16(type), 0, 1],
+    edns: false,
   };
 
   let result;
