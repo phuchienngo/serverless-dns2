@@ -36,6 +36,7 @@ import {
   edeOption,
   encodeName,
   padResponse,
+  removeOptOption,
   minTtl,
   parseAnswers,
   respond,
@@ -269,6 +270,10 @@ export async function resolve(
 ): Promise<Result> {
   const result = await resolveQuestion(q, options);
   let body = copyRd(result.body, q.rd);
+  if (!options.ecs) {
+    // RFC 7871 7.2.2: no ECS option in a response to a query without one.
+    body = removeOptOption(body, 8);
+  }
   if (!q.edns) {
     // The upstream always sends an OPT record; a client that sent none must
     // not get one (RFC 6891).
@@ -310,12 +315,20 @@ async function resolveQuestion(
   if (q.ednsVersion > 0) {
     return {body: respond(q, 16, []), ttl: 0}; // BADVERS (RFC 6891).
   }
+  if (q.raw[q.raw.length - 2] !== 0 || q.raw[q.raw.length - 1] !== 1) {
+    // Only class IN is served; the cache key has no class.
+    return {body: respond(q, 5, []), ttl: 0}; // REFUSED.
+  }
 
   const isDdr =
     q.type === TYPE_SVCB &&
     (q.name === '_dns.resolver.arpa' || q.name === `_dns.${host}`);
   if (isDdr) {
     return {body: ddrAnswer(q, host), ttl: 300};
+  }
+  if (q.name === 'resolver.arpa' || q.name.endsWith('.resolver.arpa')) {
+    // RFC 9462: reserved for DDR; never forwarded.
+    return {body: respondNegative(q, 0, 300), ttl: 300};
   }
   if (q.name === 'localhost' || q.name.endsWith('.localhost')) {
     // RFC 6761: localhost names are the loopback address.

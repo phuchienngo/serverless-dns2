@@ -409,6 +409,85 @@ export function stripOpt(resp: Uint8Array): Uint8Array {
 }
 
 /**
+ * Removes every EDNS option with the given code from the OPT record.
+ * @return The message unchanged if it has no such option or cannot be read.
+ */
+export function removeOptOption(resp: Uint8Array, code: number): Uint8Array {
+  try {
+    const view = new DataView(resp.buffer, resp.byteOffset, resp.byteLength);
+    const before = view.getUint16(6) + view.getUint16(8);
+    const total = before + view.getUint16(10);
+    let offset = skipName(resp, 12) + 4;
+    for (let i = 0; i < total; i++) {
+      offset = skipName(resp, offset);
+      const type = view.getUint16(offset);
+      const length = view.getUint16(offset + 8);
+      const data = offset + 10;
+      offset = data + length;
+      if (i < before || type !== 41) {
+        continue;
+      }
+      const kept: number[] = [];
+      let found = false;
+      for (let p = data; p + 4 <= offset;) {
+        const size = view.getUint16(p + 2);
+        if (view.getUint16(p) === code) {
+          found = true;
+        } else {
+          kept.push(...resp.subarray(p, p + 4 + size));
+        }
+        p += 4 + size;
+      }
+      if (!found) {
+        return resp;
+      }
+      const out = new Uint8Array(data + kept.length + (resp.length - offset));
+      out.set(resp.subarray(0, data), 0);
+      out.set(kept, data);
+      out.set(resp.subarray(offset), data + kept.length);
+      new DataView(out.buffer).setUint16(data - 2, kept.length);
+      return out;
+    }
+    return resp;
+  } catch {
+    return resp;
+  }
+}
+
+/**
+ * Lists the records of the additional section other than OPT; `start` is the
+ * offset of the record's TYPE field.
+ */
+export function parseAdditional(resp: Uint8Array): AnswerRecord[] {
+  const view = new DataView(resp.buffer, resp.byteOffset, resp.byteLength);
+  const before = view.getUint16(6) + view.getUint16(8);
+  const total = before + view.getUint16(10);
+  let offset = skipName(resp, 12) + 4;
+  const records = [];
+  for (let i = 0; i < total; i++) {
+    offset = skipName(resp, offset);
+    if (offset + 10 > resp.length) {
+      throw new Error('bad response');
+    }
+    const length = view.getUint16(offset + 8);
+    if (offset + 10 + length > resp.length) {
+      throw new Error('bad response');
+    }
+    const type = view.getUint16(offset);
+    if (i >= before && type !== 41) {
+      records.push({
+        start: offset,
+        type,
+        ttl: view.getUint32(offset + 4),
+        length,
+      });
+    }
+    offset += 10 + length;
+  }
+  return records;
+}
+
+/**
  * @param offset Start of a possibly compressed name.
  * @return Offset of the first byte after the name.
  */

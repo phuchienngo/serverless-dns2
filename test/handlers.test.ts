@@ -1,0 +1,259 @@
+/** HTTP layer: RFC 8484 DoH (/dns-query) and the Google-style JSON API (/resolve). */
+
+import assert from 'node:assert/strict';
+import {afterEach, beforeEach, describe, test} from 'node:test';
+import {handle, handleJson} from '../src/handlers.js';
+import {
+  T,
+  ip4,
+  makeQuery,
+  makeResponse,
+  mockUpstream,
+  parseMsg,
+} from './helpers.js';
+
+const ctx = {env: {}, ip: null} as never;
+const B = 'https://dns.test';
+let upstream: ReturnType<typeof mockUpstream>;
+let n = 0;
+const fresh = () => `h${n++}.handlers.example.com`;
+
+beforeEach(() => {
+  upstream = mockUpstream(q =>
+    makeResponse({
+      qname: q.question[0].name,
+      qtype: q.question[0].type,
+      answer:
+        q.question[0].type === T.A
+          ? [{type: T.A, ttl: 120, rdata: ip4('192.0.2.9')}]
+          : [],
+    })
+  );
+});
+afterEach(() => upstream.restore());
+
+const b64url = (b: Uint8Array) => Buffer.from(b).toString('base64url');
+const post = (body: Uint8Array | string, type = 'application/dns-message') =>
+  handle(
+    new Request(`${B}/dns-query`, {
+      method: 'POST',
+      headers: {'content-type': type},
+      body: body as never,
+    }),
+    ctx
+  );
+const get = (path: string, h = handle) => h(new Request(`${B}${path}`), ctx);
+
+describe('/dns-query (RFC 8484)', () => {
+  test('POST returns application/dns-message', async () => {
+    const res = await post(makeQuery(fresh(), T.A, {id: 5}));
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('content-type'), 'application/dns-message');
+    const m = parseMsg(new Uint8Array(await res.arrayBuffer()));
+    assert.equal(m.id, 5);
+    assert.equal(m.answer.length, 1);
+  });
+
+  test('GET ?dns= with base64url, padded or not', async () => {
+    const wire = makeQuery(fresh(), T.A);
+    for (const param of [b64url(wire), b64url(wire) + '==']) {
+      const res = await get(`/dns-query?dns=${param}`);
+      assert.equal(res.status, 200, param);
+    }
+  });
+
+  test('Cache-Control max-age is the answer TTL, and HIT is flagged', async () => {
+    const wire = makeQuery(fresh(), T.A);
+    const first = await post(wire);
+    assert.match(first.headers.get('cache-control')!, /^private, max-age=\d+$/);
+    assert.equal(first.headers.get('x-cache'), null);
+    const second = await post(wire);
+    assert.equal(second.headers.get('x-cache'), 'HIT');
+  });
+
+  test('the same question over POST and GET share the cache', async () => {
+    const wire = makeQuery(fresh(), T.A);
+    await post(wire);
+    const res = await get(`/dns-query?dns=${b64url(wire)}`);
+    assert.equal(res.headers.get('x-cache'), 'HIT');
+  });
+
+  test('405 for other methods, with Allow', async () => {
+    for (const method of ['PUT', 'DELETE', 'PATCH', 'HEAD']) {
+      const res = await handle(new Request(`${B}/dns-query`, {method}), ctx);
+      assert.equal(res.status, 405, method);
+      assert.equal(res.headers.get('allow'), 'GET, POST');
+    }
+  });
+
+  test('415 for a wrong content type, including a look-alike', async () => {
+    assert.equal(
+      (await post(makeQuery(fresh(), T.A), 'application/json')).status,
+      415
+    );
+    assert.equal(
+      (await post(makeQuery(fresh(), T.A), 'application/dns-messages')).status,
+      415
+    );
+    assert.equal(
+      (
+        await post(
+          makeQuery(fresh(), T.A),
+          'application/dns-message; charset=x'
+        )
+      ).status,
+      200
+    );
+  });
+
+  test('413 for a body that is too large, 400 for garbage', async () => {
+    assert.equal((await post(new Uint8Array(70000))).status, 413);
+    assert.equal((await post(new Uint8Array([1, 2, 3]))).status, 400);
+  });
+
+  test('400 without dns, for bad base64, and 414 for a very long parameter', async () => {
+    assert.equal((await get('/dns-query')).status, 400);
+    assert.equal((await get('/dns-query?dns=***')).status, 400);
+    assert.equal(
+      (await get(`/dns-query?dns=${'A'.repeat(20000)}`)).status,
+      414
+    );
+  });
+
+  test('the JSON API also answers on /dns-query?name=', async () => {
+    const res = await get(`/dns-query?name=${fresh()}`);
+    assert.match(res.headers.get('content-type')!, /json/);
+  });
+
+  test('an upstream failure becomes SERVFAIL, not an HTTP error', async () => {
+    upstream.restore();
+    upstream = mockUpstream(() => {
+      throw new Error('down');
+    });
+    const res = await post(makeQuery(fresh(), T.A));
+    assert.equal(res.status, 200);
+    assert.equal(parseMsg(new Uint8Array(await res.arrayBuffer())).rcode, 2);
+  });
+
+  test('DO, CD and a client subnet reach the upstream', async () => {
+    const wire = makeQuery(fresh(), T.A, {
+      do: true,
+      cd: true,
+      ecs: {family: 1, prefix: 24, address: [198, 51, 100]},
+    });
+    await post(wire);
+    const sent = upstream.calls[0].query;
+    assert.equal(sent.opt?.do, true);
+    assert.equal(sent.cd, true);
+    assert.deepEqual(
+      [...sent.opt!.options.find(o => o.code === 8)!.data],
+      [0, 1, 24, 0, 198, 51, 100]
+    );
+  });
+});
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+describe('/resolve (Google JSON API)', () => {
+  const json = async (path: string) => {
+    const res = await get(path, handleJson);
+    return {
+      res,
+      body: (res.status === 200 ? await res.json() : await res.text()) as any,
+    };
+  };
+
+  test('returns Google-style JSON', async () => {
+    const name = fresh();
+    const {res, body} = await json(`/resolve?name=${name}&type=A`);
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get('content-type')!, /^application\/json/);
+    assert.equal(body.Status, 0);
+    assert.equal(body.Answer[0].data, '192.0.2.9');
+    assert.deepEqual(body.Question, [{name: `${name}.`, type: 1}]);
+  });
+
+  test('type may be a name or a number; the default is A', async () => {
+    const name = fresh();
+    assert.equal(
+      (await json(`/resolve?name=${name}&type=aaaa`)).body.Question[0].type,
+      28
+    );
+    assert.equal(
+      (await json(`/resolve?name=${name}&type=28`)).body.Question[0].type,
+      28
+    );
+    assert.equal(
+      (await json(`/resolve?name=${name}`)).body.Question[0].type,
+      1
+    );
+  });
+
+  test('400 for a bad name, type or subnet', async () => {
+    assert.equal((await json('/resolve')).res.status, 400);
+    assert.equal(
+      (await json(`/resolve?name=${'a'.repeat(64)}.com`)).res.status,
+      400
+    );
+    assert.equal((await json('/resolve?name=a..com')).res.status, 400);
+    assert.equal((await json('/resolve?name=a.com&type=0')).res.status, 400);
+    assert.equal((await json('/resolve?name=a.com&type=NOPE')).res.status, 400);
+    assert.equal(
+      (await json('/resolve?name=a.com&type=70000')).res.status,
+      400
+    );
+    assert.equal(
+      (await json(`/resolve?name=${fresh()}&edns_client_subnet=xyz`)).res
+        .status,
+      400
+    );
+  });
+
+  test('only GET is implemented; HEAD is a bad request', async () => {
+    const post = await handleJson(
+      new Request(`${B}/resolve?name=a.com`, {method: 'POST'}),
+      ctx
+    );
+    assert.equal(post.status, 501);
+    const head = await handleJson(
+      new Request(`${B}/resolve?name=a.com`, {method: 'HEAD'}),
+      ctx
+    );
+    assert.equal(head.status, 400);
+  });
+
+  test('do=1 asks the upstream for DNSSEC, cd=1 disables checking', async () => {
+    await json(`/resolve?name=${fresh()}&do=1&cd=true`);
+    assert.equal(upstream.calls[0].query.opt?.do, true);
+    assert.equal(upstream.calls[0].query.cd, true);
+  });
+
+  test('edns_client_subnet is sent upstream', async () => {
+    await json(`/resolve?name=${fresh()}&edns_client_subnet=203.0.113.0/24`);
+    const option = upstream.calls[0].query.opt!.options.find(
+      o => o.code === 8
+    )!;
+    assert.deepEqual([...option.data], [0, 1, 24, 0, 203, 0, 113]);
+  });
+
+  test('type PTR with an IP converts it to the reverse name', async () => {
+    const {body} = await json('/resolve?name=203.0.113.9&type=PTR');
+    assert.equal(body.Question[0].name, '9.113.0.203.in-addr.arpa.');
+  });
+
+  test('ct=application/dns-message returns the wire format', async () => {
+    const res = await get(
+      `/resolve?name=${fresh()}&ct=application/dns-message`,
+      handleJson
+    );
+    assert.equal(res.headers.get('content-type'), 'application/dns-message');
+  });
+
+  test('an upstream failure is Status 2 (SERVFAIL)', async () => {
+    upstream.restore();
+    upstream = mockUpstream(() => {
+      throw new Error('down');
+    });
+    const {body} = await json(`/resolve?name=${fresh()}`);
+    assert.equal(body.Status, 2);
+  });
+});

@@ -3,10 +3,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "tsc --noEmit && tsc --noEmit -p scripts",
+    "check": "tsc --noEmit && tsc --noEmit -p scripts && tsc --noEmit -p test",
     "format": "prettier --write src functions",
     "deploy": "npm run build-lists && wrangler pages deploy --branch main",
-    "build-lists": "tsx scripts/build-blocklist.ts"
+    "build-lists": "tsx scripts/build-blocklist.ts",
+    "test": "tsx --test test/*.test.ts"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261117.1",
