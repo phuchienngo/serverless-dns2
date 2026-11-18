@@ -161,3 +161,11 @@ export const ECH_FRONT_DOMAIN = 'cloudflare-ech.com';
 /** Domain blocklist built by `npm run build-lists` (see blocklist.ts). */
 export const BLOCKLIST_ENABLED = true;
 export const BLOCKLIST_PATH = '/blocklist.bin';
+/** Regex block/allow rules built from blocklists.yaml (see regexlist.ts). */
+export const RULES_PATH = '/rules.json';
+
+/**
+ * Also check every CNAME target in an answer against the blocklist, so a
+ * tracker hidden behind a first-party subdomain is blocked (CNAME uncloaking).
+ */
+export const CNAME_UNCLOAK = true;

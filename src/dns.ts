@@ -229,6 +229,22 @@ export function parseAnswers(resp: Uint8Array): AnswerRecord[] {
 }
 
 /**
+ * @return The lower-cased CNAME targets in the answer section, without the
+ *     trailing dot. Empty if the message cannot be read.
+ */
+export function cnameTargets(resp: Uint8Array): string[] {
+  try {
+    return parseAnswers(resp)
+      .filter(a => a.type === 5)
+      .map(a =>
+        lowerAscii(readName(resp, a.start + 10).name.replace(/\.$/, ''))
+      );
+  } catch {
+    return [];
+  }
+}
+
+/**
  * @return Smallest answer TTL in seconds (at most an hour), or 30
  *     when there is no answer or the message cannot be read.
  */

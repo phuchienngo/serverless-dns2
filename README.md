@@ -25,7 +25,7 @@ then set `dns_ddr_version 1` and `networkmonitor_async_privdns_resolution 1` via
 
 ## Blocklist
 
-1. Put your sources in `blocklists.yaml` (`lists`, plus optional `allow` and `block` domains).
+1. Put your sources in `blocklists.yaml` (`lists`, plus optional `allow` and `block` rules).
 2. `npm run build-lists` downloads them, keeps plain domains only and writes `public/blocklist.bin`
    (sorted 64-bit domain hashes, 8 bytes per effective blocked domain; blocking a domain blocks its subdomains).
    If a source fails, nothing is written and the build fails.
@@ -33,8 +33,16 @@ then set `dns_ddr_version 1` and `networkmonitor_async_privdns_resolution 1` via
    Settings -> Builds, set **Build command** to `npm run build-lists` and **Build output directory**
    to `public`. `npm run deploy` builds it locally and uploads.
 
+Rules: `block:` and `allow:` in `blocklists.yaml` take domains (which also cover their subdomains) or `/regex/` rules,
+matched against the lower-case name without a trailing dot (anchor with `^`/`$` yourself). The build rejects lookaround,
+backreferences and the common nested-quantifier forms such as `(a+)+` (not every slow pattern: keep rules simple). `allow` wins over the lists and the block rules,
+so an allowed subdomain works even under a blocked parent. Domains already matched by a block regex are left out of the
+hash list. Try rules with `npx tsx scripts/match-regex.ts name...` (checks the regex and allow rules only).
+
+CNAME uncloaking (`CNAME_UNCLOAK` in `src/config.ts`): every CNAME target in an answer is also checked against the
+blocklist, so a tracker hidden behind a first-party subdomain (`metrics.site.com -> x.tracker.net`) gets NXDOMAIN.
+
 Blocked names get NXDOMAIN. Each isolate loads the file once into memory.
-`allow` cannot punch a hole into a blocked parent domain.
 
 ## Latency
 

@@ -4,9 +4,15 @@
  */
 
 import {mkdir, readFile, writeFile} from 'node:fs/promises';
-import {dirname} from 'node:path';
+import {dirname, join} from 'node:path';
 import {parse} from 'yaml';
 import {HEADER_WORDS, HASH_WORDS, MAGIC, hashDomain} from '../src/blockset.js';
+import {
+  checkPattern,
+  compilePatterns,
+  domainPattern,
+  splitRules,
+} from '../src/regexlist.js';
 
 const DOMAIN =
   /^(?=.{1,253}$)([a-z0-9_]([a-z0-9_-]{0,61}[a-z0-9_])?\.)+[a-z][a-z0-9-]{1,62}$/;
@@ -54,11 +60,6 @@ async function readSource(source: string): Promise<string> {
   return response.text();
 }
 
-/** True if `name` is `parent` or one of its subdomains. */
-function isUnder(name: string, parent: string): boolean {
-  return name === parent || name.endsWith('.' + parent);
-}
-
 function buildHashes(domains: Set<string>): Uint32Array {
   const entries: Array<{name: string; hash: [number, number]}> = [];
   for (const domain of domains) {
@@ -98,11 +99,39 @@ async function main() {
   const [configPath = 'blocklists.yaml', outPath = 'public/blocklist.bin'] =
     process.argv.slice(2);
   const config: Config = parse(await readFile(configPath, 'utf8')) ?? {};
-  const lists = config.lists ?? [];
-  const allow = (config.allow ?? []).map(d => d.trim().toLowerCase());
+
+  // `block` and `allow` entries are domains or /regex/ rules.
+  const block = splitRules(config.block ?? []);
+  const allow = splitRules(config.allow ?? []);
+  for (const pattern of [...block.patterns, ...allow.patterns]) {
+    const problem = checkPattern(pattern);
+    if (problem) {
+      throw new Error(`regex ${pattern}: ${problem}`);
+    }
+  }
+  // An allowed domain also allows its subdomains, and wins over every block
+  // rule at query time, so it becomes a regex rule too.
+  const allowPatterns = [
+    ...allow.patterns,
+    ...allow.domains.map(domainPattern),
+  ];
+  // The runtime joins the patterns of each group into one regex, so check
+  // that the joined regex compiles (e.g. no duplicate named groups).
+  for (const group of [block.patterns, allowPatterns]) {
+    try {
+      compilePatterns(group);
+    } catch (error) {
+      throw new Error(
+        `regex rules do not combine: ${(error as Error).message}`
+      );
+    }
+  }
+  console.log(
+    `${block.patterns.length} block regex, ${allowPatterns.length} allow rules`
+  );
 
   const domains = new Set<string>();
-  for (const source of lists) {
+  for (const source of config.lists ?? []) {
     const before = domains.size;
     let total = 0;
     for (const line of (await readSource(source)).split(/\r?\n/)) {
@@ -114,20 +143,34 @@ async function main() {
     }
     console.log(`${source}: ${total} domains, ${domains.size - before} new`);
   }
-  for (const domain of config.block ?? []) {
-    domains.add(domain.trim().toLowerCase());
+  for (const domain of block.domains) {
+    domains.add(domain);
   }
-  for (const domain of domains) {
-    if (allow.some(parent => isUnder(domain, parent))) {
-      domains.delete(domain);
+  // A domain the regex rules already block does not need a hash. The rule must
+  // also match a subdomain of it ("a." + domain), because a listed domain
+  // blocks its subdomains too.
+  const regex = compilePatterns(block.patterns);
+  if (regex) {
+    let dropped = 0;
+    for (const domain of domains) {
+      if (regex.test(domain) && regex.test('a.' + domain)) {
+        domains.delete(domain);
+        dropped++;
+      }
     }
+    console.log(`${dropped} domains dropped, already matched by regex`);
   }
   if (!domains.size) {
     console.warn('warning: no domains; the blocklist will be empty');
   }
 
   const hashes = buildHashes(domains);
+  // Written last, so a failed source leaves the previous files untouched.
   await mkdir(dirname(outPath), {recursive: true});
+  await writeFile(
+    join(dirname(outPath), 'rules.json'),
+    JSON.stringify({block: block.patterns, allow: allowPatterns})
+  );
   await writeFile(outPath, new Uint8Array(hashes.buffer));
   console.log(
     `${domains.size} domains -> ${hashes[1]} hashes, ${hashes.byteLength} bytes -> ${outPath}`

@@ -11,6 +11,7 @@ import {
   BLOCK_HTTPS,
   BLOCK_PTR,
   BLOCK_UNDELEGATED,
+  CNAME_UNCLOAK,
   ECS_ENABLED,
   REDIRECTS,
   TYPE_A,
@@ -25,13 +26,14 @@ import {
 } from './config.js';
 import {
   buildQuery,
+  cnameTargets,
   encodeName,
   minTtl,
   parseAnswers,
   respond,
   u16,
 } from './dns.js';
-import {getBlocklist, peekBlocklist} from './blocklist.js';
+import {getBlocklist, isReady, peekBlocklist, peekRules} from './blocklist.js';
 import {addEch, startEchProbe} from './ech.js';
 import {makeEcs} from './ecs.js';
 import type {Env, Question, ResolveOptions, Result} from './types.js';
@@ -266,25 +268,55 @@ export async function resolve(
   }
 
   if (BLOCKLIST_ENABLED) {
-    let blocklist = peekBlocklist();
-    if (!blocklist) {
+    if (!isReady()) {
       // This isolate has not loaded the blocklist yet. Start answering while
       // it loads, and discard the answer if the name turns out to be listed.
       const loading = getBlocklist(env, host, options.timing);
       const answering = answer(q, options);
       answering.catch(() => {});
-      blocklist = await loading;
-      if (blocklist && isBlocked(blocklist, q.name)) {
+      await loading;
+      if (blocked(q.name)) {
         return {body: respond(q, 3, []), ttl: 300}; // NXDOMAIN.
       }
-      return answering;
+      return uncloak(q, await answering);
     }
-    if (isBlocked(blocklist, q.name)) {
+    if (blocked(q.name)) {
       return {body: respond(q, 3, []), ttl: 300}; // NXDOMAIN.
     }
+    return uncloak(q, await answer(q, options));
   }
 
   return answer(q, options);
+}
+
+/**
+ * @return Whether the name is blocked: an allow rule wins, then the blocklist
+ *     (name or a parent domain) and the regex block rules.
+ */
+function blocked(name: string): boolean {
+  const {block, allow} = peekRules();
+  if (allow?.test(name)) {
+    return false;
+  }
+  const hashes = peekBlocklist();
+  return (!!hashes && isBlocked(hashes, name)) || !!block?.test(name);
+}
+
+/**
+ * CNAME uncloaking: if any CNAME target in the answer is blocked, the name is
+ * a tracker hiding behind a first-party subdomain, so answer NXDOMAIN.
+ * Checked on every response (a few lookups) rather than stored in the cache,
+ * so newer rules apply to cached answers too.
+ */
+function uncloak(q: Question, result: Result): Result {
+  if (
+    CNAME_UNCLOAK &&
+    !peekRules().allow?.test(q.name) &&
+    cnameTargets(result.body).some(blocked)
+  ) {
+    return {body: respond(q, 3, []), ttl: 300};
+  }
+  return result;
 }
 
 /**
