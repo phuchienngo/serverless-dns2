@@ -139,6 +139,8 @@ export const RECORD_TYPES: Record<string, number> = {
 /** DNS record types used by name in the code. */
 export const TYPE_A = 1;
 export const TYPE_AAAA = 28;
+export const TYPE_HINFO = 13;
+export const TYPE_ANY = 255;
 export const TYPE_OPT = 41;
 export const TYPE_SVCB = 64;
 export const TYPE_HTTPS = 65;

@@ -16,6 +16,8 @@ import {
   REDIRECTS,
   TYPE_A,
   TYPE_AAAA,
+  TYPE_ANY,
+  TYPE_HINFO,
   TYPE_HTTPS,
   TYPE_SVCB,
   HEDGE_MAX_MS,
@@ -28,11 +30,18 @@ import {
   buildQuery,
   cnameTargets,
   EDE_BLOCKED,
+  EDE_STALE_ANSWER,
+  addOptOption,
+  edeOption,
   encodeName,
+  padResponse,
   minTtl,
   parseAnswers,
   respond,
+  respondNegative,
+  stripOpt,
   u16,
+  u32,
 } from './dns.js';
 import {getBlocklist, isReady, peekBlocklist, peekRules} from './blocklist.js';
 import {addEch, startEchProbe} from './ech.js';
@@ -45,7 +54,7 @@ const encoder = new TextEncoder();
 
 /** Types refused locally with NODATA (see config.ts). */
 const BLOCKED_TYPES = new Set<number>([
-  ...(BLOCK_ANY ? [255] : []),
+  ...(BLOCK_ANY ? [TYPE_ANY] : []),
   ...(BLOCK_AAAA ? [TYPE_AAAA] : []),
   ...(BLOCK_PTR ? [12] : []),
   ...(BLOCK_HTTPS ? [TYPE_HTTPS] : []),
@@ -256,7 +265,49 @@ export async function resolve(
   q: Question,
   options: ResolveOptions
 ): Promise<Result> {
+  const result = await resolveQuestion(q, options);
+  let body = result.body;
+  if (!q.edns) {
+    // The upstream always sends an OPT record; a client that sent none must
+    // not get one (RFC 6891).
+    body = stripOpt(body);
+  } else {
+    if (result.stale) {
+      body = addOptOption(body, edeOption(EDE_STALE_ANSWER, ''));
+    }
+    if (q.padding) {
+      body = padResponse(body); // Last, so that the size is final.
+    }
+  }
+  return {...result, body};
+}
+
+/** @return A record whose owner is the question's name, class IN. */
+function record(type: number, ttl: number, rdata: number[]): number[] {
+  return [
+    0xc0,
+    12, // Owner name: pointer to the question.
+    ...u16(type),
+    0,
+    1,
+    ...u32(ttl),
+    ...u16(rdata.length),
+    ...rdata,
+  ];
+}
+
+async function resolveQuestion(
+  q: Question,
+  options: ResolveOptions
+): Promise<Result> {
   const {env, host} = options;
+
+  if (q.opcode !== 0) {
+    return {body: respond(q, 4, []), ttl: 0}; // NOTIMP.
+  }
+  if (q.ednsVersion > 0) {
+    return {body: respond(q, 16, []), ttl: 0}; // BADVERS (RFC 6891).
+  }
 
   const isDdr =
     q.type === TYPE_SVCB &&
@@ -264,8 +315,23 @@ export async function resolve(
   if (isDdr) {
     return {body: ddrAnswer(q, host), ttl: 300};
   }
+  if (q.name === 'localhost' || q.name.endsWith('.localhost')) {
+    // RFC 6761: localhost names are the loopback address.
+    const address =
+      q.type === TYPE_A
+        ? [record(TYPE_A, 3600, [127, 0, 0, 1])]
+        : q.type === TYPE_AAAA
+          ? [record(TYPE_AAAA, 3600, [...new Array(15).fill(0), 1])]
+          : [];
+    return {
+      body: address.length
+        ? respond(q, 0, address)
+        : respondNegative(q, 0, 3600),
+      ttl: 3600,
+    };
+  }
   if (BLOCK_UNDELEGATED && isUndelegated(q.name)) {
-    return {body: respond(q, 3, []), ttl: 3600};
+    return {body: respondNegative(q, 3, 3600), ttl: 3600};
   }
 
   if (BLOCKLIST_ENABLED) {
@@ -311,7 +377,7 @@ function blockReason(name: string): string | null {
 /** NXDOMAIN with an Extended DNS Error saying the name was blocked. */
 function nxdomain(q: Question, reason: string): Result {
   return {
-    body: respond(q, 3, [], {code: EDE_BLOCKED, text: reason}),
+    body: respondNegative(q, 3, 300, {code: EDE_BLOCKED, text: reason}),
     ttl: 300,
   };
 }
@@ -343,13 +409,19 @@ async function answer(q: Question, options: ResolveOptions): Promise<Result> {
   const flags = {dnssec: !!options.dnssec, cd: !!options.cd};
 
   if (BLOCKED_TYPES.has(q.type)) {
-    return {body: respond(q, 0, []), ttl: 3600};
+    if (q.type === TYPE_ANY) {
+      // RFC 8482: a minimal HINFO answer.
+      const text = [...encoder.encode('RFC8482')];
+      const hinfo = record(TYPE_HINFO, 3600, [text.length, ...text, 0]);
+      return {body: respond(q, 0, [hinfo]), ttl: 3600};
+    }
+    return {body: respondNegative(q, 0, 3600), ttl: 3600};
   }
 
   const target = REDIRECTS[q.name];
   if (target && (q.type === TYPE_SVCB || q.type === TYPE_HTTPS)) {
     // Service hints would reveal the original IPs: answer NODATA.
-    return {body: respond(q, 0, []), ttl: 60};
+    return {body: respondNegative(q, 0, 60), ttl: 60};
   }
 
   let ecs = null;

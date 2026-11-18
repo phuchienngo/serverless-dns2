@@ -114,7 +114,13 @@ export async function handle(
   // is ignored, so the connecting IP is used.
   const ecs = clientEcs(wire, question.raw.length);
   const timing: Record<string, number> = {};
-  const options: ResolveOptions = {...ctx, host: url.hostname, timing};
+  const options: ResolveOptions = {
+    ...ctx,
+    host: url.hostname,
+    timing,
+    dnssec: question.dnssecOk,
+    cd: question.cd,
+  };
   if (ecs) {
     options.ecs = ecs;
   }
@@ -211,6 +217,12 @@ export async function handleJson(
     type,
     raw: [...encodeName(name), ...u16(type), 0, 1],
     edns: false,
+    dnssecOk: false,
+    cd: false,
+    rd: true,
+    opcode: 0,
+    ednsVersion: 0,
+    padding: false,
   };
 
   let result;

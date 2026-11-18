@@ -12,6 +12,17 @@ export interface Question {
   raw: number[];
   /** Whether the query carried an EDNS (OPT) record. */
   edns: boolean;
+  /** The DO bit of that record: the client wants DNSSEC records. */
+  dnssecOk: boolean;
+  /** The CD (checking disabled) flag of the query. */
+  cd: boolean;
+  /** The RD flag, which a response copies. */
+  rd: boolean;
+  opcode: number;
+  /** EDNS version of the query's OPT record (0 if there is none). */
+  ednsVersion: number;
+  /** Whether the query has an EDNS Padding option (RFC 7830). */
+  padding: boolean;
 }
 
 /** An answer ready to send back to the client. */
@@ -19,6 +30,8 @@ export interface Result {
   body: Uint8Array;
   ttl: number;
   hit?: boolean;
+  /** Served past its TTL (RFC 8767). */
+  stale?: boolean;
 }
 
 export interface Env {

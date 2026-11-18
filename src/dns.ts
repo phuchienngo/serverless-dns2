@@ -86,13 +86,57 @@ export function parseQuestion(buf: Uint8Array): Question {
   if (offset + 4 > buf.length) {
     throw new Error('truncated');
   }
+  const opt = findOpt(buf, offset + 4);
   return {
     id: view.getUint16(0),
     name: lowerAscii(labels.join('.')),
     type: view.getUint16(offset),
     raw: Array.from(buf.subarray(12, offset + 4)),
-    edns: view.getUint16(10) > 0,
+    edns: opt !== null,
+    dnssecOk: !!opt && (opt.flags & 0x8000) !== 0,
+    cd: (buf[3] & 0x10) !== 0,
+    rd: (buf[2] & 1) !== 0,
+    opcode: (buf[2] >> 3) & 15,
+    ednsVersion: opt?.version ?? 0,
+    padding: opt?.padding ?? false,
   };
+}
+
+/**
+ * Looks for the OPT record in the additional section of a query.
+ * @param offset Where the records after the question start.
+ * @return Its flags field (the DO bit is 0x8000), EDNS version and whether it
+ *     has a Padding option; null if there is no OPT record.
+ */
+function findOpt(
+  buf: Uint8Array,
+  offset: number
+): {flags: number; version: number; padding: boolean} | null {
+  try {
+    const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+    const records = view.getUint16(6) + view.getUint16(8) + view.getUint16(10);
+    for (let i = 0; i < records; i++) {
+      offset = skipName(buf, offset);
+      const length = view.getUint16(offset + 8);
+      if (view.getUint16(offset) === 41) {
+        let padding = false;
+        const end = offset + 10 + length;
+        for (let at = offset + 10; at + 4 <= end;) {
+          padding ||= view.getUint16(at) === OPTION_PADDING;
+          at += 4 + view.getUint16(at + 2);
+        }
+        return {
+          flags: view.getUint16(offset + 6),
+          version: buf[offset + 5],
+          padding,
+        };
+      }
+      offset += 10 + length;
+    }
+  } catch {
+    // A damaged record section: treat the query as having no EDNS.
+  }
+  return null;
 }
 
 /**
@@ -124,14 +168,18 @@ export function buildQuery(
   return new Uint8Array([...header, ...question, ...opt]);
 }
 
-/** Extended DNS Error codes (RFC 8914) used for blocked names. */
+/** Extended DNS Error codes (RFC 8914) that are used. */
+export const EDE_STALE_ANSWER = 3;
 export const EDE_BLOCKED = 15;
+
+const OPTION_EDE = 15;
+const OPTION_PADDING = 12;
 
 /**
  * Builds a response message for the given question.
  * @param records Resource records, already encoded.
- * @param ede Extended DNS Error (RFC 8914) to attach, if the client sent an
- *     OPT record: an info code and a short text.
+ * @param ede Extended DNS Error (RFC 8914) to attach: an info code and a short
+ *     text. Like the OPT record that carries it, only sent if the query had one.
  */
 export function respond(
   q: Question,
@@ -139,38 +187,194 @@ export function respond(
   records: number[][],
   ede?: {code: number; text: string}
 ): Uint8Array {
-  const opt = ede && q.edns ? edeRecord(ede.code, ede.text) : [];
+  return build(q, rcode, records, [], ede);
+}
+
+/**
+ * Builds an NXDOMAIN or NODATA response. It carries a made-up SOA record in
+ * the authority section, without which clients cannot cache the negative
+ * answer (RFC 2308).
+ * @param ttl How long the answer may be cached, in seconds.
+ */
+export function respondNegative(
+  q: Question,
+  rcode: number,
+  ttl: number,
+  ede?: {code: number; text: string}
+): Uint8Array {
+  const rdata = [
+    ...encodeName('dns.invalid'), // MNAME.
+    ...encodeName('hostmaster.invalid'), // RNAME.
+    0,
+    0,
+    0,
+    1, // Serial.
+    ...u32(3600), // Refresh.
+    ...u32(600), // Retry.
+    ...u32(86400), // Expire.
+    ...u32(ttl), // Minimum: the negative-caching TTL.
+  ];
+  const soa = [
+    0xc0,
+    12, // Owner name: pointer to the question.
+    0,
+    6, // Type SOA.
+    0,
+    1, // Class IN.
+    ...u32(ttl),
+    ...u16(rdata.length),
+    ...rdata,
+  ];
+  return build(q, rcode, [], [soa], ede);
+}
+
+export function u32(n: number): number[] {
+  return [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255];
+}
+
+function build(
+  q: Question,
+  rcode: number,
+  answers: number[][],
+  authority: number[][],
+  ede?: {code: number; text: string}
+): Uint8Array {
+  // A query without an OPT record must get a response without one (RFC 6891).
+  const opt = q.edns ? optRecord(q, rcode, ede) : [];
   const header = [
     ...u16(q.id),
-    0x81, // QR, RD.
-    0x80 | rcode, // RA, response code.
+    0x80 | (q.opcode << 3) | (q.rd ? 1 : 0), // QR, opcode, RD as asked.
+    0x80 | (rcode & 15), // RA, response code.
     0,
     1, // One question.
-    ...u16(records.length),
-    0,
-    0,
+    ...u16(answers.length),
+    ...u16(authority.length),
     0,
     opt.length ? 1 : 0, // Additional records: the OPT record.
   ];
-  return new Uint8Array([...header, ...q.raw, ...records.flat(), ...opt]);
+  return new Uint8Array([
+    ...header,
+    ...q.raw,
+    ...answers.flat(),
+    ...authority.flat(),
+    ...opt,
+  ]);
 }
 
-/** An OPT record carrying one Extended DNS Error option. */
-function edeRecord(code: number, text: string): number[] {
+/** An EDNS option holding an Extended DNS Error (RFC 8914). */
+export function edeOption(code: number, text: string): number[] {
   const bytes = encoder.encode(text);
-  const option = [...u16(15), ...u16(2 + bytes.length), ...u16(code), ...bytes];
+  return [...u16(OPTION_EDE), ...u16(2 + bytes.length), ...u16(code), ...bytes];
+}
+
+/**
+ * An OPT record that echoes the DO bit, with an Extended DNS Error if given.
+ * @param rcode The full response code; its upper bits go in this record.
+ */
+function optRecord(
+  q: Question,
+  rcode: number,
+  ede?: {code: number; text: string}
+): number[] {
+  const option = ede ? edeOption(ede.code, ede.text) : [];
   return [
     0, // Root name.
     0,
     41, // Type OPT.
     ...u16(1232), // UDP payload size.
-    0,
-    0,
-    0,
-    0, // Extended RCODE, version, flags.
+    rcode >> 4, // Extended RCODE.
+    0, // Version.
+    q.dnssecOk ? 0x80 : 0,
+    0, // Flags (DO).
     ...u16(option.length),
     ...option,
   ];
+}
+
+/**
+ * Adds an option to the OPT record of a response.
+ * @return The response unchanged if it has no OPT record.
+ */
+export function addOptOption(resp: Uint8Array, option: number[]): Uint8Array {
+  try {
+    const view = new DataView(resp.buffer, resp.byteOffset, resp.byteLength);
+    const before = view.getUint16(6) + view.getUint16(8);
+    const total = before + view.getUint16(10);
+    let offset = skipName(resp, 12) + 4;
+    for (let i = 0; i < total; i++) {
+      offset = skipName(resp, offset);
+      const length = view.getUint16(offset + 8);
+      const end = offset + 10 + length;
+      if (i >= before && view.getUint16(offset) === 41) {
+        const out = new Uint8Array(resp.length + option.length);
+        out.set(resp.subarray(0, end));
+        out.set(option, end);
+        out.set(resp.subarray(end), end + option.length);
+        new DataView(out.buffer).setUint16(offset + 8, length + option.length);
+        return out;
+      }
+      offset = end;
+    }
+  } catch {
+    // Not a message we can edit: leave it as it is.
+  }
+  return resp;
+}
+
+/**
+ * Pads a response to a multiple of 468 bytes with an EDNS Padding option, for
+ * a client that padded its query (RFC 7830, RFC 8467).
+ */
+export function padResponse(resp: Uint8Array): Uint8Array {
+  const block = 468;
+  const size = (block - ((resp.length + 4) % block)) % block;
+  return addOptOption(resp, [
+    ...u16(OPTION_PADDING),
+    ...u16(size),
+    ...new Array<number>(size).fill(0),
+  ]);
+}
+
+/**
+ * Removes OPT records from a response, for a client whose query had none.
+ */
+export function stripOpt(resp: Uint8Array): Uint8Array {
+  try {
+    const view = new DataView(resp.buffer, resp.byteOffset, resp.byteLength);
+    const before = view.getUint16(6) + view.getUint16(8);
+    const total = before + view.getUint16(10);
+    let offset = skipName(resp, 12) + 4;
+    const cuts: Array<[number, number]> = [];
+    for (let i = 0; i < total; i++) {
+      const start = offset;
+      offset = skipName(resp, offset);
+      const type = view.getUint16(offset);
+      offset += 10 + view.getUint16(offset + 8);
+      if (i >= before && type === 41) {
+        cuts.push([start, offset]);
+      }
+    }
+    if (!cuts.length) {
+      return resp;
+    }
+    const parts: Uint8Array[] = [];
+    let from = 0;
+    for (const [start, end] of cuts) {
+      parts.push(resp.subarray(from, start));
+      from = end;
+    }
+    parts.push(resp.subarray(from));
+    const out = new Uint8Array(parts.reduce((n, part) => n + part.length, 0));
+    let at = 0;
+    for (const part of parts) {
+      out.set(part, at);
+      at += part.length;
+    }
+    new DataView(out.buffer).setUint16(10, total - before - cuts.length);
+    return out;
+  } catch {
+    return resp;
+  }
 }
 
 /**

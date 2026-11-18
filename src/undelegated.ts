@@ -15,7 +15,6 @@ const PRIVATE_TLDS = new Set([
   'lan',
   'local',
   'localdomain',
-  'localhost',
   'localnet',
   'modem',
   'onion',

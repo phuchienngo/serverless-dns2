@@ -110,7 +110,12 @@ function serve(entry: Entry, q: Question, now: number): Hit | null {
     return null;
   }
   return {
-    result: {body, ttl: remaining, hit: true},
+    result: {
+      body,
+      ttl: remaining,
+      hit: true,
+      stale: freshness === 'stale',
+    },
     refresh: freshness !== 'fresh',
   };
 }
