@@ -336,6 +336,19 @@ export function padResponse(resp: Uint8Array): Uint8Array {
 }
 
 /**
+ * @return The response with its RD flag set as in the query (RFC 1035); the
+ *     upstream always answers RD=1. The input is not changed.
+ */
+export function copyRd(resp: Uint8Array, rd: boolean): Uint8Array {
+  if (resp.length < 12 || (resp[2] & 1) === (rd ? 1 : 0)) {
+    return resp;
+  }
+  const out = resp.slice();
+  out[2] = (out[2] & ~1) | (rd ? 1 : 0);
+  return out;
+}
+
+/**
  * Removes OPT records from a response, for a client whose query had none.
  */
 export function stripOpt(resp: Uint8Array): Uint8Array {

@@ -32,6 +32,7 @@ import {
   EDE_BLOCKED,
   EDE_STALE_ANSWER,
   addOptOption,
+  copyRd,
   edeOption,
   encodeName,
   padResponse,
@@ -266,7 +267,7 @@ export async function resolve(
   options: ResolveOptions
 ): Promise<Result> {
   const result = await resolveQuestion(q, options);
-  let body = result.body;
+  let body = copyRd(result.body, q.rd);
   if (!q.edns) {
     // The upstream always sends an OPT record; a client that sent none must
     // not get one (RFC 6891).
