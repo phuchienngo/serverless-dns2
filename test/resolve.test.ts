@@ -11,6 +11,7 @@ import {resolve} from '../src/resolve.js';
 import {
   T,
   ip4,
+  ip6,
   makeQuery,
   makeResponse,
   mockUpstream,
@@ -88,6 +89,46 @@ describe('answers made locally (no upstream call)', () => {
     }
     assert.deepEqual(keys, [1, 7], 'alpn then dohpath');
     assert.ok(Buffer.from(rdata).includes('/dns-query{?dns}'));
+  });
+
+  test('DDR adds the A and AAAA records of the gateway host (RFC 9462 4)', async () => {
+    useUpstream(q => {
+      const {name, type} = q.question[0];
+      const rdata = type === T.A ? ip4('203.0.113.9') : ip6('2001:db8::9');
+      return makeResponse({
+        qname: name,
+        qtype: type,
+        answer: [{type, ttl: 3000, rdata}],
+      });
+    });
+    const host = fresh('ddr');
+    const {msg} = await ask('_dns.resolver.arpa', T.SVCB, {}, {host});
+    const hints = msg.additional.filter(r => r.type !== 41);
+    assert.deepEqual(hints.map(r => r.type).sort(), [T.A, T.AAAA]);
+    for (const hint of hints) {
+      assert.equal(hint.name, `${host}.`);
+      assert.ok(hint.ttl <= 300, 'not longer than the SVCB record');
+    }
+    assert.deepEqual(
+      [...hints.find(r => r.type === T.A)!.rdata],
+      ip4('203.0.113.9')
+    );
+    assert.equal(msg.answer.length, 1);
+  });
+
+  test('DDR still answers when the addresses cannot be looked up', async () => {
+    useUpstream(() => {
+      throw new Error('down');
+    });
+    const host = fresh('ddr');
+    const {msg} = await ask('_dns.resolver.arpa', T.SVCB, {}, {host});
+    assert.equal(msg.answer[0].type, T.SVCB);
+    assert.equal(msg.additional.filter(r => r.type !== 41).length, 0);
+  });
+
+  test('a DDR query that is refused gets no addresses', async () => {
+    const {msg} = await ask('_dns.resolver.arpa', T.SVCB, {qclass: 3});
+    assert.equal(msg.rcode, 5);
     assert.equal(upstream.calls.length, 0);
   });
 

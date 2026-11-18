@@ -25,7 +25,7 @@ const FLAG_DO = 0x8000;
 
 /** Size of the header, and of a record's TYPE, CLASS, TTL and RDLENGTH. */
 const HEADER_BYTES = 12;
-const RECORD_FIXED_BYTES = 10;
+export const RECORD_FIXED_BYTES = 10;
 /** Largest wire length of a name (RFC 1035 2.3.4). */
 const MAX_NAME_BYTES = 255;
 /** Pad responses to a multiple of this (RFC 8467 4.1). */
@@ -365,16 +365,18 @@ export function makeQuestion(name: string, type: number): Question {
 
 /**
  * @param ttl Seconds.
- * @return A record of class IN whose owner is the name of the question
- *     (a pointer to it, as the question starts right after the header).
+ * @param owner Encoded owner name; by default a pointer to the name of the
+ *     question (which starts right after the header).
+ * @return A record of class IN.
  */
 export function makeRecord(
   type: number,
   ttl: number,
-  rdata: number[]
+  rdata: number[],
+  owner: number[] = QUESTION_POINTER
 ): number[] {
   return [
-    ...QUESTION_POINTER,
+    ...owner,
     ...u16(type),
     ...u16(CLASS_IN),
     ...u32(ttl),
@@ -442,9 +444,10 @@ export function respond(
   q: Question,
   rcode: number,
   records: number[][],
-  ede?: Ede
+  ede?: Ede,
+  additional: number[][] = []
 ): Uint8Array {
-  return build(q, rcode, records, [], ede);
+  return build(q, rcode, records, [], ede, additional);
 }
 
 /**
@@ -476,7 +479,8 @@ function build(
   rcode: number,
   answers: number[][],
   authority: number[][],
-  ede?: Ede
+  ede?: Ede,
+  additional: number[][] = []
 ): Uint8Array {
   // A query without an OPT record must get a response without one (RFC 6891).
   const opt = q.edns ? optRecord(q, rcode, ede) : [];
@@ -488,14 +492,14 @@ function build(
     1, // One question.
     ...u16(answers.length),
     ...u16(authority.length),
-    0,
-    opt.length ? 1 : 0, // Additional records: the OPT record.
+    ...u16(additional.length + (opt.length ? 1 : 0)), // Additional + OPT.
   ];
   return new Uint8Array([
     ...header,
     ...q.raw,
     ...answers.flat(),
     ...authority.flat(),
+    ...additional.flat(),
     ...opt,
   ]);
 }

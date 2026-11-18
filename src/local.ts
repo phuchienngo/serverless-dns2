@@ -54,7 +54,11 @@ const BLOCKED_TYPES = new Set<number>([
  * Builds the Discovery of Designated Resolvers answer (RFC 9462).
  * @param host This gateway's hostname.
  */
-function ddrAnswer(q: Question, host: string): Uint8Array {
+export function ddrAnswer(
+  q: Question,
+  host: string,
+  hints: number[][] = []
+): Uint8Array {
   const alpn = [0, 1, 0, 6, 2, 104, 50, 2, 104, 51]; // Key 1: "h2", "h3".
   const path = encoder.encode('/dns-query{?dns}');
   const rdata = [
@@ -68,7 +72,15 @@ function ddrAnswer(q: Question, host: string): Uint8Array {
     ...path, // Key 7: dohpath.
   ];
   const record = makeRecord(TYPE_SVCB, TTL_DDR, rdata);
-  return respond(q, RCODE_NOERROR, [record]);
+  return respond(q, RCODE_NOERROR, [record], undefined, hints);
+}
+
+/** @return Whether this is the DDR query for this gateway (RFC 9462). */
+export function isDdr(q: Question, host: string): boolean {
+  return (
+    q.type === TYPE_SVCB &&
+    (q.name === '_dns.resolver.arpa' || q.name === `_dns.${host}`)
+  );
 }
 
 /** An error response with no records, which clients should not cache. */
@@ -119,8 +131,8 @@ function localhost(q: Question): Result {
 }
 
 /**
- * Answers a question that is refused or special: invalid queries, DDR,
- * `resolver.arpa`, localhost and undelegated names.
+ * Answers a question that is refused or special: invalid queries,
+ * `resolver.arpa` (except the DDR query itself), localhost and undelegated names.
  * @return Null if the name must be resolved normally.
  */
 export function localAnswer(q: Question, host: string): Result | null {
@@ -128,11 +140,8 @@ export function localAnswer(q: Question, host: string): Result | null {
   if (refusal !== null) {
     return error(q, refusal);
   }
-  const isDdr =
-    q.type === TYPE_SVCB &&
-    (q.name === '_dns.resolver.arpa' || q.name === `_dns.${host}`);
-  if (isDdr) {
-    return {body: ddrAnswer(q, host), ttl: TTL_DDR};
+  if (isDdr(q, host)) {
+    return null; // Needs the resolver's addresses: see resolve.ts.
   }
   if (q.name === 'resolver.arpa' || q.name.endsWith('.resolver.arpa')) {
     // RFC 9462: reserved for DDR; never forwarded.

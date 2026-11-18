@@ -7,9 +7,20 @@ import {lookupLocal, lookupShared, store} from './cache.js';
 import {blockReason, nxdomain, uncloak} from './blocking.js';
 import {getBlocklist, isReady} from './blocklist.js';
 import {BLOCKLIST_ENABLED, ECS_ENABLED} from './config.js';
-import {EDE_STALE_ANSWER, OPTION_ECS} from './constants.js';
+import {
+  EDE_STALE_ANSWER,
+  OPTION_ECS,
+  TTL_DDR,
+  TYPE_A,
+  TYPE_AAAA,
+} from './constants.js';
 import {
   addOptOption,
+  encodeName,
+  makeQuestion,
+  makeRecord,
+  parseAnswers,
+  RECORD_FIXED_BYTES,
   copyRd,
   edeOption,
   padResponse,
@@ -18,7 +29,7 @@ import {
 } from './dns.js';
 import {addEch, startEchProbe} from './ech.js';
 import {makeEcs} from './ecs.js';
-import {localAnswer, typeAnswer} from './local.js';
+import {ddrAnswer, isDdr, localAnswer, typeAnswer} from './local.js';
 import type {Question, ResolveOptions, Result} from './types.js';
 import {askUpstream, coalesce, forward} from './upstream.js';
 
@@ -38,6 +49,43 @@ function cacheKey(
   const flags = `${+dnssec}${+cd}${+ad}`;
   const name = encodeURIComponent(q.name);
   return `https://${host}/__cache/${name}/${q.type}/${subnet}/${flags}`;
+}
+
+/**
+ * The DDR answer (RFC 9462 4): the SVCB record naming this gateway, and the
+ * A and AAAA records of its host name in the additional section, which save
+ * the client a round trip. The addresses are left out if they cannot be had.
+ */
+async function ddrResult(
+  q: Question,
+  options: ResolveOptions
+): Promise<Result> {
+  const {host} = options;
+  const owner = encodeName(host);
+  const lookups = await Promise.allSettled(
+    [TYPE_A, TYPE_AAAA].map(type =>
+      // Same options for both, and no subnet, so that they share cache entries.
+      answer(makeQuestion(host, type), {...options, ecs: null})
+    )
+  );
+  const hints = lookups.flatMap(lookup => {
+    if (lookup.status !== 'fulfilled') {
+      return [];
+    }
+    const {body} = lookup.value;
+    return parseAnswers(body)
+      .filter(r => r.type === TYPE_A || r.type === TYPE_AAAA)
+      .map(r => {
+        const data = r.start + RECORD_FIXED_BYTES;
+        return makeRecord(
+          r.type,
+          Math.min(r.ttl, TTL_DDR),
+          [...body.subarray(data, data + r.length)],
+          owner
+        );
+      });
+  });
+  return {body: ddrAnswer(q, host, hints), ttl: TTL_DDR};
 }
 
 /**
@@ -78,6 +126,9 @@ async function resolveQuestion(
   const special = localAnswer(q, host);
   if (special) {
     return special;
+  }
+  if (isDdr(q, host)) {
+    return ddrResult(q, options);
   }
   if (!BLOCKLIST_ENABLED) {
     return answer(q, options);

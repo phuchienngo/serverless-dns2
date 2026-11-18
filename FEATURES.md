@@ -26,7 +26,7 @@ Every feature, the standard it follows, where it lives and which test covers it.
 | ANY gets HINFO | RFC 8482 | `resolve.ts` | `resolve.test.ts` |
 | NOTIMP for other opcodes, AXFR/IXFR/MAILB/MAILA; FORMERR for QTYPE 0/OPT/TKEY/TSIG; REFUSED for classes other than IN | RFC 1035, 5936, 6895 | `resolve.ts` | `resolve.test.ts` |
 | FORMERR for an invalid OPT (two OPTs, non-root owner, bad length) | RFC 6891 6.1.1 | `dns.ts`, `resolve.ts` | `dns.test.ts`, `resolve.test.ts` |
-| DDR (`_dns.resolver.arpa` SVCB); other `resolver.arpa` names get NODATA | RFC 9462, 9460 | `resolve.ts` | `resolve.test.ts` |
+| DDR (`_dns.resolver.arpa` SVCB, with the host's A/AAAA in additional); other `resolver.arpa` names get NODATA | RFC 9462, 9460 | `resolve.ts` | `resolve.test.ts` |
 | Best-effort ECH key for Cloudflare names (skipped with DO) | RFC 9460 (ECH draft) | `ech.ts` | `resolve.test.ts` |
 | Blocklist (Golomb-coded set, subdomains covered) | none | `blockset.ts`, `blocklist.ts` | `blockset.test.ts`, `blocking.test.ts` |
 | Blocklist build: list parsing, dedupe, regex drop | hosts / adblock syntax | `scripts/blocklist-lib.ts` | `blockset.test.ts` |
