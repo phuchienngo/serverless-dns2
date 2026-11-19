@@ -169,6 +169,23 @@ describe('parseQuestion (RFC 1035 4.1)', () => {
     assert.equal(parseQuestion(odd).malformed, true, 'option overruns RDATA');
   });
 
+  test('reads the EDNS Cookie option, and a bad length is malformed (RFC 7873 5.2.2)', () => {
+    assert.equal(q('a.test', T.A).cookie, null);
+    assert.equal(q('a.test', T.A, {edns: false}).cookie, null);
+    const eight = [1, 2, 3, 4, 5, 6, 7, 8];
+    const parsed = q('a.test', T.A, {cookie: eight});
+    assert.deepEqual(parsed.cookie, eight);
+    assert.equal(parsed.malformed, false);
+    for (const length of [16, 24, 40]) {
+      const ok = q('a.test', T.A, {cookie: new Array(length).fill(1)});
+      assert.equal(ok.malformed, false, `length ${length}`);
+    }
+    for (const length of [0, 1, 7, 9, 15, 41]) {
+      const bad = q('a.test', T.A, {cookie: new Array(length).fill(1)});
+      assert.equal(bad.malformed, true, `length ${length}`);
+    }
+  });
+
   test('ignores a damaged additional section (treated as no EDNS)', () => {
     const wire = Uint8Array.from(makeQuery('a.test', T.A, {edns: false}));
     wire[11] = 3; // ARCOUNT says 3 records, there are none

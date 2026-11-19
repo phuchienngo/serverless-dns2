@@ -43,6 +43,36 @@ describe('localAnswer', () => {
     assert.equal(m.additional.filter(r => r.type !== 41).length, 0);
   });
 
+  test('RESINFO for this host is answered locally (RFC 9606), for no other name', () => {
+    const answer = localAnswer(
+      q('dns.example.com', T.RESINFO),
+      'dns.example.com'
+    )!;
+    const m = parseMsg(answer.body);
+    assert.equal(m.answer.length, 1);
+    assert.equal(m.answer[0].type, T.RESINFO);
+    const rdata = m.answer[0].rdata;
+    const keys: string[] = [];
+    for (let i = 0; i < rdata.length; i += 1 + rdata[i]) {
+      keys.push(
+        Buffer.from(rdata.subarray(i + 1, i + 1 + rdata[i])).toString()
+      );
+    }
+    assert.deepEqual(keys, [
+      'exterr=3,15,19,23',
+      'infourl=https://dns.example.com/',
+    ]);
+    assert.equal(answer.ttl, 300);
+    assert.equal(
+      localAnswer(q('other.example.com', T.RESINFO), 'dns.example.com'),
+      null
+    );
+    assert.equal(
+      localAnswer(q('dns.example.com', T.A), 'dns.example.com'),
+      null
+    );
+  });
+
   test('localhost, resolver.arpa and undelegated names', () => {
     assert.equal(
       parseMsg(localAnswer(q('a.localhost', T.A), 'h')!.body).answer.length,

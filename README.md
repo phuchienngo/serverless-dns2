@@ -4,7 +4,7 @@
 - `/resolve` — Google-style JSON API (GET): `name`, `type`, `do`, `cd`, `ct`, `edns_client_subnet`.
   (`/dns-query?name=...` also returns JSON.)
 
-Config: no secrets. The upstream DoH URL (`UPSTREAM`, optional `UPSTREAM_BACKUP`) and the other knobs are in `src/config.ts`.
+Config: the only secret is the optional `COOKIE_SECRET` (see DNS Cookies below). The upstream DoH URL (`UPSTREAM`, optional `UPSTREAM_BACKUP`) and the other knobs are in `src/config.ts`.
 
 Layout: `src/` (TypeScript logic; entry `core.ts`), `functions/dns-query.ts` and `functions/resolve.ts` (Pages adapters).
 
@@ -28,6 +28,29 @@ then set `dns_ddr_version 1` and `networkmonitor_async_privdns_resolution 1` via
   answers carry EDE 3 (RFC 8767). `localhost` and `*.localhost` answer 127.0.0.1 / ::1 (RFC 6761), `ANY` gets a minimal
   HINFO (RFC 8482), non-QUERY opcodes get NOTIMP and EDNS versions above 0 get BADVERS. RD and the opcode are echoed.
 - Best-effort ECH: for Cloudflare-hosted names the HTTPS answer gets Cloudflare's shared `ech` key (`src/ech.ts`). Not done for queries with DO, as the replaced record would carry no signature.
+
+## Standards extras
+
+Three optional features, none of which touches the caches or their TTLs.
+
+- **DNS64** (RFC 6147), off unless a request has `?dns64` (`/dns-query?dns=...&dns64` or `/resolve?name=...&type=AAAA&dns64=1`;
+  `dns64=0` or `false` turns it off). When an AAAA answer has no AAAA record but the name has A records, the response carries
+  AAAA records made from them: the IPv4 address inside the NAT64 prefix `DNS64_PREFIX` in `src/config.ts` (default `64:ff9b::/96`).
+  The TTL is the smaller of the A record's and the AAAA answer's (RFC 6147 5.1.7). Not done for a query with DO and no CD
+  (it could not validate), nor for private, loopback, documentation, multicast and other non-global addresses. A CNAME chain
+  is flattened: the new records are owned by the name asked. It costs one more lookup of the A record (itself cached), and
+  the result is kept in the isolate's memory. Needs a NAT64 gateway on the client's network; PTR for the prefix is not translated.
+- **Resolver information** (RFC 9606): `RESINFO` for this gateway's host name answers locally with `exterr=3,15,19,23`
+  (the Extended DNS Errors it produces) and `infourl=https://<host>/`. Clients that found the gateway through DDR can ask for it.
+- **DNS Cookies** (RFC 7873): set the secret with `npx wrangler pages secret put COOKIE_SECRET --project-name serverless-dns2`
+  (for example from `openssl rand -hex 32`) and redeploy. A query with a Cookie option then gets the client cookie back with
+  a server cookie (first 8 bytes of HMAC-SHA256 of the client cookie and the client IP). Cookies are never enforced, since HTTPS
+  already stops spoofing, so a query without one, or with a stale one, is answered normally; a cookie of an invalid length is FORMERR.
+  Without `COOKIE_SECRET` cookies are ignored.
+
+Not done on purpose: QNAME minimisation (RFC 9156) and the root-related RFCs (8109, 8806) apply to a recursive resolver, and
+this gateway forwards to one. Aggressive NSEC caching (8198) and NXDOMAIN cut (8020) would answer without asking the upstream
+from data this gateway does not validate.
 
 ## Blocklist
 
