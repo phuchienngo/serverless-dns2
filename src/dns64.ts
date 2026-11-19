@@ -3,6 +3,7 @@
  * clients that reach IPv4-only hosts through a NAT64 gateway.
  */
 
+import {lookupLocal, store} from './cache.js';
 import {DNS64_PREFIX} from './config.js';
 import {
   RCODE_NOERROR,
@@ -22,6 +23,7 @@ import {
   rcodeOf,
   respond,
 } from './dns.js';
+import {inBlocks, type Ipv4Block} from './ipv4.js';
 import type {Question, Result} from './types.js';
 
 /**
@@ -29,7 +31,7 @@ import type {Question, Result} from './types.js';
  * loopback, link-local, documentation, benchmarking, multicast and reserved
  * addresses, as [address, prefix length].
  */
-const NOT_GLOBAL: Array<[number[], number]> = [
+const NOT_GLOBAL: Ipv4Block[] = [
   [[0, 0, 0, 0], 8],
   [[10, 0, 0, 0], 8],
   [[100, 64, 0, 0], 10],
@@ -46,16 +48,7 @@ const NOT_GLOBAL: Array<[number[], number]> = [
   [[224, 0, 0, 0], 3],
 ];
 
-const toNumber = (a: number[]) =>
-  ((a[0] << 24) | (a[1] << 16) | (a[2] << 8) | a[3]) >>> 0;
-
-function isGlobal(address: number[]): boolean {
-  const n = toNumber(address);
-  return !NOT_GLOBAL.some(([base, bits]) => {
-    const mask = (0xffffffff << (32 - bits)) >>> 0;
-    return (n & mask) >>> 0 === (toNumber(base) & mask) >>> 0;
-  });
-}
+const isGlobal = (address: number[]) => !inBlocks(address, NOT_GLOBAL);
 
 /** The A records `ipv4only.arpa` has (RFC 7050): never global addresses. */
 const IPV4ONLY = 'ipv4only.arpa';
@@ -176,47 +169,76 @@ async function synthesizePtr(
   };
 }
 
+/** How an answer to a question of one type is made from another lookup. */
+interface Synthesizer {
+  /** The response codes of the upstream answer that it replaces. */
+  rcodes: number[];
+  make: (
+    q: Question,
+    result: Result,
+    lookup: (q: Question) => Promise<Result>
+  ) => Promise<Result | null>;
+}
+
+const SYNTHESIZERS: Record<number, Synthesizer> = {
+  [TYPE_AAAA]: {rcodes: [RCODE_NOERROR], make: synthesizeAaaa},
+  [TYPE_PTR]: {rcodes: [RCODE_NOERROR, RCODE_NXDOMAIN], make: synthesizePtr},
+};
+
 /**
- * Synthesizes what the upstream has no answer for (RFC 6147): AAAA records
- * from A records, and PTR records for addresses inside the prefix. Not done
- * for a client that validates DNSSEC (DO without CD, 5.5): it would reject
- * them. AAAA records are owned by the question name (a CNAME chain is
- * flattened), their TTL is the smaller of the A record's and the AAAA
- * answer's (5.1.7).
- * @param result The answer to the question.
- * @param lookup Resolves the question that the answer is made from.
- * @param memo Keeps what is synthesized, so that the lookup is not repeated.
- * @return `result` itself if nothing is synthesized.
+ * @return What makes the answer for `q`, if the upstream has none of its own.
+ *     Not for a client that validates DNSSEC (DO without CD, RFC 6147 5.5):
+ *     it would reject what is made.
  */
-export async function synthesize(
-  q: Question,
-  result: Result,
-  lookup: (q: Question) => Promise<Result>,
-  memo: {get: () => Result | null; set: (result: Result) => void}
-): Promise<Result> {
-  const rcode = rcodeOf(result.body);
-  const make =
-    q.type === TYPE_AAAA && rcode === RCODE_NOERROR
-      ? synthesizeAaaa
-      : q.type === TYPE_PTR &&
-          (rcode === RCODE_NOERROR || rcode === RCODE_NXDOMAIN)
-        ? synthesizePtr
-        : null;
+function synthesizerFor(q: Question, result: Result): Synthesizer | null {
+  const synthesizer = SYNTHESIZERS[q.type];
   if (
-    !make ||
+    !synthesizer ||
     (q.dnssecOk && !q.cd) ||
+    !synthesizer.rcodes.includes(rcodeOf(result.body)) ||
     parseAnswers(result.body).some(r => r.type === q.type)
   ) {
+    return null;
+  }
+  return synthesizer;
+}
+
+/**
+ * Resolves a question with DNS64 (RFC 6147): `ipv4only.arpa` is answered
+ * locally, and what the upstream has no answer for is made from another
+ * lookup, AAAA records from A records and PTR records for the prefix. AAAA
+ * records are owned by the question name (a CNAME chain is flattened), their
+ * TTL is the smaller of the A record's and the AAAA answer's (5.1.7). What is
+ * made is kept in memory under `key`, so the lookup is not repeated.
+ * DNS64 is a courtesy: if making an answer fails, the upstream's stands.
+ * @param resolveOne Resolves a question the normal way.
+ */
+export async function withDns64(
+  q: Question,
+  key: string,
+  resolveOne: (q: Question) => Promise<Result>
+): Promise<Result> {
+  const local = ipv4onlyAnswer(q);
+  if (local) {
+    return local;
+  }
+  const result = await resolveOne(q);
+  try {
+    const synthesizer = synthesizerFor(q, result);
+    if (!synthesizer) {
+      return result;
+    }
+    const kept = lookupLocal(key, q);
+    if (kept && !kept.refresh) {
+      return kept.result;
+    }
+    const made = await synthesizer.make(q, result, resolveOne);
+    if (!made) {
+      return result;
+    }
+    store(undefined, key, made);
+    return made;
+  } catch {
     return result;
   }
-  const memoized = memo.get();
-  if (memoized) {
-    return memoized;
-  }
-  const synthesized = await make(q, result, lookup);
-  if (!synthesized) {
-    return result;
-  }
-  memo.set(synthesized);
-  return synthesized;
 }

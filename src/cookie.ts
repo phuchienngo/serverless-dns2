@@ -32,7 +32,7 @@ function hmacKey(secret: string): Promise<CryptoKey> {
 
 /**
  * @return The EDNS option to add to the response, or null if the query had
- *     no cookie or there is no secret.
+ *     no cookie, there is no secret, or the cookie could not be made.
  *     Server cookie: the first 8 bytes of HMAC-SHA256(secret, client cookie,
  *     client address), so it cannot be forged without the secret.
  */
@@ -44,10 +44,15 @@ export async function cookieOption(
   if (!q.cookie || !secret) {
     return null;
   }
-  const client = q.cookie.slice(0, 8);
-  const key = await hmacKey(secret);
-  const input = new Uint8Array([...client, ...encoder.encode(ip ?? '')]);
-  const mac = new Uint8Array(await crypto.subtle.sign('HMAC', key, input));
-  const data = [...client, ...mac.subarray(0, 8)];
-  return [...u16(OPTION_COOKIE), ...u16(data.length), ...data];
+  try {
+    const client = q.cookie.slice(0, 8);
+    const key = await hmacKey(secret);
+    const input = new Uint8Array([...client, ...encoder.encode(ip ?? '')]);
+    const mac = new Uint8Array(await crypto.subtle.sign('HMAC', key, input));
+    const data = [...client, ...mac.subarray(0, 8)];
+    return [...u16(OPTION_COOKIE), ...u16(data.length), ...data];
+  } catch {
+    imported = null; // Try the key again next time.
+    return null; // A cookie is a courtesy: the answer goes out without one.
+  }
 }

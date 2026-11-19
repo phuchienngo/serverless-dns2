@@ -8,10 +8,7 @@ import {BLOCK_ANY, BLOCK_UNDELEGATED, REDIRECTS} from './config.js';
 import {
   ALPN_HTTP,
   CLASS_IN,
-  EDE_BLOCKED,
-  EDE_NETWORK_ERROR,
-  EDE_STALE_ANSWER,
-  EDE_STALE_NXDOMAIN,
+  EDE_PRODUCED,
   RCODE_BADVERS,
   RCODE_FORMERR,
   RCODE_NOERROR,
@@ -70,10 +67,7 @@ export function ddrAnswer(
  * listing the Extended DNS Errors it produces and a page about it.
  */
 function resinfo(q: Question, host: string): Result {
-  const keys = [
-    `exterr=${[EDE_STALE_ANSWER, EDE_BLOCKED, EDE_STALE_NXDOMAIN, EDE_NETWORK_ERROR].join(',')}`,
-    `infourl=https://${host}/`,
-  ];
+  const keys = [`exterr=${EDE_PRODUCED.join(',')}`, `infourl=https://${host}/`];
   const rdata = keys.flatMap(key => {
     const bytes = [...encoder.encode(key)];
     return [bytes.length, ...bytes];

@@ -1,7 +1,7 @@
 /** DNS Cookies (src/cookie.ts, RFC 7873). */
 
 import assert from 'node:assert/strict';
-import {describe, test} from 'node:test';
+import {describe, mock, test} from 'node:test';
 import {cookieOption} from '../src/cookie.js';
 import {parseQuestion} from '../src/dns.js';
 import {T, makeQuery} from './helpers.js';
@@ -43,5 +43,20 @@ describe('cookieOption', () => {
     assert.equal(await cookieOption(q(), 'x', 's'), null);
     assert.equal(await cookieOption(q(client), 'x', undefined), null);
     assert.equal(await cookieOption(q(client), 'x', ''), null);
+  });
+});
+
+describe('cookieOption is a courtesy', () => {
+  test('a failure to sign gives no cookie instead of an error, and the key is made again', async () => {
+    const sign = mock.method(crypto.subtle, 'sign', async () => {
+      throw new Error('no crypto');
+    });
+    try {
+      assert.equal(await cookieOption(q(client), 'x', 'failing-secret'), null);
+    } finally {
+      sign.mock.restore();
+    }
+    const option = await cookieOption(q(client), 'x', 'failing-secret');
+    assert.equal(option?.length, 20, 'works again once signing does');
   });
 });

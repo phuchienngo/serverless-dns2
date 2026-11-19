@@ -1,9 +1,9 @@
 /** DNS64 synthesis (src/dns64.ts). */
 
 import assert from 'node:assert/strict';
-import {describe, test} from 'node:test';
+import {beforeEach, describe, test} from 'node:test';
 import {parseQuestion} from '../src/dns.js';
-import {ipv4onlyAnswer, synthesize} from '../src/dns64.js';
+import {ipv4onlyAnswer, withDns64} from '../src/dns64.js';
 import type {Question, Result} from '../src/types.js';
 import {
   T,
@@ -13,6 +13,7 @@ import {
   makeResponse,
   nameRdata,
   parseMsg,
+  resetState,
   soaRdata,
   type QueryOptions,
 } from './helpers.js';
@@ -39,36 +40,39 @@ const answerA = (addresses: string[], ttl = 120): Result => ({
   ttl,
 });
 
-interface Memo {
-  get: () => Result | null;
-  set: (result: Result) => void;
-}
-const noMemo: Memo = {get: () => null, set: () => {}};
-
-/** Runs synthesize with the given A answer; returns it and the A question asked. */
-async function run(
+/**
+ * Resolves `question` with DNS64 where the upstream answered `result`, and
+ * `lookup` answers whatever else is asked. Starts with an empty memory.
+ */
+async function synthesize(
   question: Question,
   result: Result,
-  a: Result | Error,
-  memo: Memo = noMemo
-) {
-  const asked: Question[] = [];
-  const out = await synthesize(
-    question,
-    result,
-    async lookup => {
-      asked.push(lookup);
-      if (a instanceof Error) {
-        throw a;
-      }
-      return a;
-    },
-    memo
+  lookup: (q: Question) => Promise<Result>,
+  key = `https://dns.test/__cache/${nextKey++}/dns64`
+): Promise<Result> {
+  return withDns64(question, key, async asked =>
+    asked.type === question.type && asked.name === question.name
+      ? result
+      : lookup(asked)
   );
+}
+let nextKey = 0;
+beforeEach(() => resetState());
+
+/** Runs DNS64 with the given A answer; returns the result and the questions asked. */
+async function run(question: Question, result: Result, a: Result | Error) {
+  const asked: Question[] = [];
+  const out = await synthesize(question, result, async lookup => {
+    asked.push(lookup);
+    if (a instanceof Error) {
+      throw a;
+    }
+    return a;
+  });
   return {out, asked};
 }
 
-describe('synthesize (RFC 6147)', () => {
+describe('withDns64 (RFC 6147)', () => {
   test('embeds each A address in the /96 prefix, TTL the smaller one', async () => {
     const {out} = await run(
       q(),
@@ -193,26 +197,44 @@ describe('synthesize (RFC 6147)', () => {
     assert.equal(out.stale, true);
   });
 
-  test('uses the memo: stores what it makes, and skips the lookup on a hit', async () => {
-    const stored: Result[] = [];
-    const memo = {
-      get: () => stored[0] ?? null,
-      set: (r: Result) => void stored.push(r),
+  test('keeps what it makes: the lookup is not repeated, and nothing made means nothing kept', async () => {
+    const key = 'https://dns.test/__cache/kept/dns64';
+    const asked: Question[] = [];
+    const resolveWith = (a: Result) => async (x: Question) => {
+      if (x.type === T.AAAA) {
+        return empty();
+      }
+      asked.push(x);
+      return a;
     };
-    const first = await run(q(), empty(), answerA(['8.8.8.8']), memo);
-    assert.equal(first.asked.length, 1);
-    assert.equal(stored.length, 1);
-    assert.equal(stored[0], first.out);
-    const second = await run(q(), empty(), answerA(['1.1.1.1']), memo);
-    assert.equal(second.asked.length, 0);
-    assert.equal(second.out, stored[0]);
+    const first = await withDns64(q(), key, resolveWith(answerA(['8.8.8.8'])));
+    assert.equal(asked.length, 1);
+    const second = await withDns64(q(), key, resolveWith(answerA(['1.1.1.1'])));
+    assert.equal(asked.length, 1, 'served from memory');
+    assert.deepEqual(
+      [...parseMsg(second.body).answer[0].rdata],
+      [...parseMsg(first.body).answer[0].rdata]
+    );
 
-    const nothing: Result[] = [];
-    await run(q(), empty(), answerA(['10.0.0.1']), {
-      get: () => null,
-      set: r => void nothing.push(r),
-    });
-    assert.equal(nothing.length, 0, 'nothing synthesized, nothing stored');
+    const other = 'https://dns.test/__cache/nothing/dns64';
+    await withDns64(q(), other, resolveWith(answerA(['10.0.0.1'])));
+    await withDns64(q(), other, resolveWith(answerA(['10.0.0.1'])));
+    assert.equal(asked.length, 3, 'nothing was made, so nothing was kept');
+  });
+
+  test('DNS64 is a courtesy: if it throws, the upstream answer stands', async () => {
+    const result = empty();
+    // A body the synthesizer cannot read, with a rcode it accepts.
+    const broken: Result = {
+      body: new Uint8Array(result.body.subarray(0, 14)),
+      ttl: 30,
+    };
+    const out = await withDns64(
+      q(),
+      'https://dns.test/__cache/broken/dns64',
+      async () => broken
+    );
+    assert.equal(out, broken);
   });
 });
 
@@ -249,7 +271,7 @@ describe('ipv4onlyAnswer (RFC 7050)', () => {
   });
 });
 
-describe('synthesize PTR (RFC 6147 5.3.1)', () => {
+describe('withDns64 PTR (RFC 6147 5.3.1)', () => {
   const name = reverse6(nat64('93.184.216.34'));
   const ptrAnswer = (...hosts: string[]): Result => ({
     body: makeResponse({
@@ -271,15 +293,10 @@ describe('synthesize PTR (RFC 6147 5.3.1)', () => {
 
   test('answers with a CNAME to the IPv4 reverse name and its PTR records', async () => {
     const asked: Question[] = [];
-    const out = await synthesize(
-      qPtr(name),
-      noAnswer(),
-      async lookup => {
-        asked.push(lookup);
-        return ptrAnswer('a.example.com.', 'b.example.com.');
-      },
-      noMemo
-    );
+    const out = await synthesize(qPtr(name), noAnswer(), async lookup => {
+      asked.push(lookup);
+      return ptrAnswer('a.example.com.', 'b.example.com.');
+    });
     assert.equal(asked.length, 1);
     assert.equal(asked[0].name, '34.216.184.93.in-addr.arpa');
     assert.equal(asked[0].type, T.PTR);
@@ -305,11 +322,8 @@ describe('synthesize PTR (RFC 6147 5.3.1)', () => {
   });
 
   test('also when the upstream answered NOERROR with nothing', async () => {
-    const out = await synthesize(
-      qPtr(name),
-      noAnswer(0),
-      async () => ptrAnswer('a.example.com.'),
-      noMemo
+    const out = await synthesize(qPtr(name), noAnswer(0), async () =>
+      ptrAnswer('a.example.com.')
     );
     assert.equal(parseMsg(out.body).answer.length, 2);
   });
@@ -319,26 +333,20 @@ describe('synthesize PTR (RFC 6147 5.3.1)', () => {
     const result = noAnswer();
     const other = reverse6(ip6('2001:db8::1'));
     const inside = (n: string) => qPtr(n);
-    assert.equal(
-      await synthesize(inside(other), result, lookup, noMemo),
-      result
-    );
+    assert.equal(await synthesize(inside(other), result, lookup), result);
     const priv = reverse6(nat64('10.1.2.3'));
+    assert.equal(await synthesize(inside(priv), result, lookup), result);
     assert.equal(
-      await synthesize(inside(priv), result, lookup, noMemo),
+      await synthesize(qPtr(name, {do: true}), result, lookup),
       result
     );
     assert.equal(
-      await synthesize(qPtr(name, {do: true}), result, lookup, noMemo),
-      result
-    );
-    assert.equal(
-      await synthesize(qPtr('1.0.0.127.in-addr.arpa'), result, lookup, noMemo),
+      await synthesize(qPtr('1.0.0.127.in-addr.arpa'), result, lookup),
       result,
       'an IPv4 reverse name'
     );
     assert.equal(
-      await synthesize(qPtr('x.' + name), result, lookup, noMemo),
+      await synthesize(qPtr('x.' + name), result, lookup),
       result,
       'a name longer than an address'
     );
@@ -353,10 +361,7 @@ describe('synthesize PTR (RFC 6147 5.3.1)', () => {
         throw new Error('down');
       },
     ]) {
-      assert.equal(
-        await synthesize(qPtr(name), result, lookup, noMemo),
-        result
-      );
+      assert.equal(await synthesize(qPtr(name), result, lookup), result);
     }
   });
 
@@ -373,8 +378,7 @@ describe('synthesize PTR (RFC 6147 5.3.1)', () => {
     const out = await synthesize(
       qPtr(name),
       real,
-      async () => (asked++, ptrAnswer('a.example.com.')),
-      noMemo
+      async () => (asked++, ptrAnswer('a.example.com.'))
     );
     assert.equal(out, real);
     assert.equal(asked, 0);

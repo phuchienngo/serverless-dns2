@@ -156,6 +156,13 @@ export const EDE_STALE_ANSWER = 3;
 export const EDE_STALE_NXDOMAIN = 19;
 export const EDE_NETWORK_ERROR = 23;
 export const EDE_BLOCKED = 15;
+/** Every Extended DNS Error code this gateway sends, which RESINFO lists. */
+export const EDE_PRODUCED = [
+  EDE_STALE_ANSWER,
+  EDE_BLOCKED,
+  EDE_STALE_NXDOMAIN,
+  EDE_NETWORK_ERROR,
+].sort((a, b) => a - b);
 
 /**
  * TTLs, in seconds, of answers made locally (also the negative-caching TTL

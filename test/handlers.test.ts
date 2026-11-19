@@ -274,3 +274,42 @@ describe('/resolve (Google JSON API)', () => {
     assert.equal(body.Status, 2);
   });
 });
+
+describe('dns64 parameter', () => {
+  const aaaa = async (query: string) => {
+    upstream.restore();
+    upstream = mockUpstream(q =>
+      makeResponse({
+        qname: q.question[0].name,
+        qtype: q.question[0].type,
+        answer:
+          q.question[0].type === T.A
+            ? [{type: T.A, ttl: 120, rdata: ip4('93.184.216.34')}]
+            : [],
+      })
+    );
+    const res = await get(
+      `/resolve?name=${fresh()}&type=AAAA${query}`,
+      handleJson
+    );
+    return ((await res.json()) as {Answer?: unknown[]}).Answer?.length ?? 0;
+  };
+
+  test('dns64=1 and dns64=true turn it on, like do and cd', async () => {
+    assert.equal(await aaaa('&dns64=1'), 1);
+    assert.equal(await aaaa('&dns64=true'), 1);
+    assert.equal(await aaaa('&dns64=TRUE'), 1);
+  });
+
+  test('anything else, or no parameter, leaves it off', async () => {
+    for (const query of [
+      '',
+      '&dns64',
+      '&dns64=0',
+      '&dns64=false',
+      '&dns64=yes',
+    ]) {
+      assert.equal(await aaaa(query), 0, query || 'no parameter');
+    }
+  });
+});

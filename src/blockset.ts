@@ -77,6 +77,17 @@ export function hashDomain(name: string, bits: number): number {
 function window(bytes: Uint8Array, pos: number): number {
   const at = pos >> 3;
   const shift = pos & 7;
+  if (at + 4 >= bytes.length) {
+    // Near the end: read the bytes that exist, without going past the array.
+    let high = 0;
+    for (let i = 0; i < 4; i++) {
+      high = (high << 8) | (at + i < bytes.length ? bytes[at + i] : 0);
+    }
+    const next = at + 4 < bytes.length ? bytes[at + 4] : 0;
+    return shift === 0
+      ? high >>> 0
+      : ((high << shift) | (next >>> (8 - shift))) >>> 0;
+  }
   const high =
     ((bytes[at] << 24) |
       (bytes[at + 1] << 16) |
@@ -88,33 +99,41 @@ function window(bytes: Uint8Array, pos: number): number {
     : ((high << shift) | (bytes[at + 4] >>> (8 - shift))) >>> 0;
 }
 
-/** Where the last `readGap` stopped, in bits. */
-let gapEnd = 0;
+/** Reads Golomb-Rice coded gaps one after the other from a bit position. */
+export class GapReader {
+  /** Where the next gap starts, in bits. */
+  pos: number;
 
-/**
- * Reads one Golomb-Rice coded gap, starting at bit `pos` (see `gapEnd`).
- */
-function readGap(bytes: Uint8Array, pos: number, k: number): number {
-  let quotient = 0;
-  for (;;) {
-    const w = window(bytes, pos);
-    if (w === 0xffffffff) {
-      quotient += 32;
-      pos += 32;
-      continue;
+  constructor(
+    private readonly bytes: Uint8Array,
+    private readonly k: number,
+    pos: number
+  ) {
+    this.pos = pos;
+  }
+
+  /** @return The next gap. */
+  next(): number {
+    let quotient = 0;
+    for (;;) {
+      const w = window(this.bytes, this.pos);
+      if (w === 0xffffffff) {
+        quotient += 32;
+        this.pos += 32;
+        continue;
+      }
+      const ones = Math.clz32(~w);
+      quotient += ones;
+      this.pos += ones + 1;
+      break;
     }
-    const ones = Math.clz32(~w);
-    quotient += ones;
-    pos += ones + 1;
-    break;
+    let remainder = 0;
+    if (this.k > 0) {
+      remainder = window(this.bytes, this.pos) >>> (32 - this.k);
+      this.pos += this.k;
+    }
+    return quotient * 2 ** this.k + remainder;
   }
-  let remainder = 0;
-  if (k > 0) {
-    remainder = window(bytes, pos) >>> (32 - k);
-    pos += k;
-  }
-  gapEnd = pos;
-  return quotient * 2 ** k + remainder;
 }
 
 /**
@@ -176,34 +195,8 @@ export function decodeBlockset(buffer: ArrayBuffer): BlockSet {
 }
 
 /** How many hashes block `b` holds. */
-function blockLength(set: BlockSet, b: number): number {
+export function blockLength(set: BlockSet, b: number): number {
   return Math.min(2 ** set.blockBits, set.count - b * 2 ** set.blockBits);
-}
-
-/**
- * Decodes every hash (for the build and the tests; a lookup never does).
- * @throws If the stream does not hold exactly what the index says.
- */
-export function decodeAll(set: BlockSet): Float64Array {
-  const values = new Float64Array(set.count);
-  let pos = 0;
-  for (let b = 0; b < set.firsts.length; b++) {
-    const at = b * 2 ** set.blockBits;
-    if (set.offsets[b] !== pos) {
-      throw new Error('bad blocklist index');
-    }
-    let value = set.firsts[b];
-    values[at] = value;
-    for (let i = 1; i < blockLength(set, b); i++) {
-      value += readGap(set.stream, pos, set.k);
-      pos = gapEnd;
-      values[at + i] = value;
-    }
-  }
-  if (pos > set.streamBits || set.streamBits - pos >= 8) {
-    throw new Error('bad blocklist length');
-  }
-  return values;
 }
 
 /** Whether the set holds the hash: decodes the one block that could. */
@@ -228,10 +221,9 @@ function contains(set: BlockSet, value: number): boolean {
   if (current === value) {
     return true;
   }
-  let pos = set.offsets[block];
+  const gaps = new GapReader(set.stream, set.k, set.offsets[block]);
   for (let i = blockLength(set, block) - 1; i > 0; i--) {
-    current += readGap(set.stream, pos, set.k);
-    pos = gapEnd;
+    current += gaps.next();
     if (current >= value) {
       return current === value;
     }

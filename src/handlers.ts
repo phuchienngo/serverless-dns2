@@ -52,12 +52,11 @@ function wireResponse(
 
 /** The options for resolving a request to `url`, with room for Server-Timing. */
 function makeOptions(url: URL, ctx: Context): ResolveOptions {
-  const dns64 = url.searchParams.get('dns64');
   return {
     ...ctx,
     host: url.hostname,
     timing: {},
-    dns64: dns64 !== null && !['0', 'false'].includes(dns64.toLowerCase()),
+    dns64: flag(url.searchParams, 'dns64'),
   };
 }
 

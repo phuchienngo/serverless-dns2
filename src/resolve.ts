@@ -32,7 +32,7 @@ import {
   stripOpt,
 } from './dns.js';
 import {cookieOption} from './cookie.js';
-import {ipv4onlyAnswer, synthesize} from './dns64.js';
+import {withDns64} from './dns64.js';
 import {addEch, startEchProbe} from './ech.js';
 import {makeEcs} from './ecs.js';
 import {ddrAnswer, isDdr, localAnswer, typeAnswer} from './local.js';
@@ -49,6 +49,11 @@ function cacheKey(host: string, q: Question, ecs: number[] | null): string {
   const flags = `${+dnssec}${+cd}${+ad}`;
   const name = encodeURIComponent(q.name);
   return `https://${host}/__cache/${name}/${q.type}/${subnet}/${flags}`;
+}
+
+/** Where DNS64 keeps what it makes: the cache key, in a space of its own. */
+function dns64Key(q: Question, options: ResolveOptions): string {
+  return `${cacheKey(options.host, q, ecsOf(options))}/dns64`;
 }
 
 /** The client subnet to send: the one chosen by the client, else its IP's. */
@@ -103,18 +108,9 @@ export async function resolve(
   q: Question,
   options: ResolveOptions
 ): Promise<Result> {
-  let result =
-    (options.dns64 && ipv4onlyAnswer(q)) || (await resolveQuestion(q, options));
-  if (options.dns64) {
-    const key = `${cacheKey(options.host, q, ecsOf(options))}/dns64`;
-    result = await synthesize(q, result, a => resolveQuestion(a, options), {
-      get: () => {
-        const hit = lookupLocal(key, q);
-        return hit && !hit.refresh ? hit.result : null;
-      },
-      set: synthesized => store(undefined, key, synthesized),
-    });
-  }
+  const result = options.dns64
+    ? await withDns64(q, dns64Key(q, options), a => resolveQuestion(a, options))
+    : await resolveQuestion(q, options);
   let body = copyRd(result.body, q.rd);
   if (!options.ecs) {
     // RFC 7871 7.2.2: no ECS option in a response to a query without one.

@@ -5,10 +5,12 @@
 
 import {
   BLOCK_BITS,
+  type BlockSet,
   HEADER_BYTES,
   INDEX_ENTRY_BYTES,
+  GapReader,
   MAGIC,
-  decodeAll,
+  blockLength,
   decodeBlockset,
   hashDomain,
   isBlocked,
@@ -41,6 +43,31 @@ export function parseDomain(line: string): string | null {
   }
   s = s.replace(/^\*\./, '').replace(/\.$/, '').toLowerCase();
   return DOMAIN.test(s) ? s : null;
+}
+
+/**
+ * Decodes every hash of a blocklist (a lookup never does).
+ * @throws If the stream does not hold exactly what the index says.
+ */
+export function decodeAll(set: BlockSet): Float64Array {
+  const values = new Float64Array(set.count);
+  const gaps = new GapReader(set.stream, set.k, 0);
+  for (let b = 0; b < set.firsts.length; b++) {
+    const at = b * 2 ** set.blockBits;
+    if (set.offsets[b] !== gaps.pos) {
+      throw new Error('bad blocklist index');
+    }
+    let value = set.firsts[b];
+    values[at] = value;
+    for (let i = 1; i < blockLength(set, b); i++) {
+      value += gaps.next();
+      values[at + i] = value;
+    }
+  }
+  if (gaps.pos > set.streamBits || set.streamBits - gaps.pos >= 8) {
+    throw new Error('bad blocklist length');
+  }
+  return values;
 }
 
 /**

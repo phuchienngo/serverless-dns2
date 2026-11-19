@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import {describe, test} from 'node:test';
 import {
   buildBlockset,
+  decodeAll,
   dropMatched,
   parseDomain,
 } from '../scripts/blocklist-lib.js';
@@ -15,7 +16,6 @@ import {
   HEADER_BYTES,
   INDEX_ENTRY_BYTES,
   MAGIC,
-  decodeAll,
   decodeBlockset,
   hashDomain,
   isBlocked,

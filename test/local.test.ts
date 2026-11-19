@@ -2,6 +2,7 @@
 
 import assert from 'node:assert/strict';
 import {describe, test} from 'node:test';
+import {EDE_PRODUCED} from '../src/constants.js';
 import {parseQuestion} from '../src/dns.js';
 import {ddrAnswer, isDdr, localAnswer, typeAnswer} from '../src/local.js';
 import {T, makeQuery, parseMsg} from './helpers.js';
@@ -80,6 +81,16 @@ describe('localAnswer', () => {
     );
     assert.equal(rcodeOf(localAnswer(q('x.resolver.arpa', T.A), 'h')), 0);
     assert.equal(rcodeOf(localAnswer(q('nas.lan', T.A), 'h')), 3);
+  });
+});
+
+describe('EDE_PRODUCED', () => {
+  test('is sorted, without duplicates, and is what RESINFO lists', () => {
+    assert.deepEqual(
+      EDE_PRODUCED,
+      [...new Set(EDE_PRODUCED)].sort((a, b) => a - b)
+    );
+    assert.deepEqual(EDE_PRODUCED, [3, 15, 19, 23]);
   });
 });
 

@@ -33,8 +33,8 @@ then set `dns_ddr_version 1` and `networkmonitor_async_privdns_resolution 1` via
 
 Three optional features, none of which touches the caches or their TTLs.
 
-- **DNS64** (RFC 6147), off unless a request has `?dns64` (`/dns-query?dns=...&dns64` or `/resolve?name=...&type=AAAA&dns64=1`;
-  `dns64=0` or `false` turns it off). When an AAAA answer has no AAAA record but the name has A records, the response carries
+- **DNS64** (RFC 6147), off unless a request has `dns64=1` (or `true`), like the `do` and `cd` parameters (`/dns-query?dns=...&dns64=1` or
+  `/resolve?name=...&type=AAAA&dns64=1`). When an AAAA answer has no AAAA record but the name has A records, the response carries
   AAAA records made from them: the IPv4 address inside the NAT64 prefix `DNS64_PREFIX` in `src/config.ts` (default `64:ff9b::/96`).
   The TTL is the smaller of the A record's and the AAAA answer's (RFC 6147 5.1.7). Not done for a query with DO and no CD
   (it could not validate), nor for private, loopback, documentation, multicast and other non-global addresses. A CNAME chain
