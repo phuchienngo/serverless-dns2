@@ -4,8 +4,11 @@
  */
 
 import {
+  BLOCK_BITS,
   HEADER_BYTES,
+  INDEX_ENTRY_BYTES,
   MAGIC,
+  decodeAll,
   decodeBlockset,
   hashDomain,
   isBlocked,
@@ -70,49 +73,67 @@ export function buildBlockset(domains: Set<string>, k: number): Uint8Array {
     (x, y) => x - y
   );
 
-  const header = new Uint8Array(HEADER_BYTES);
-  const view = new DataView(header.buffer);
-  view.setUint32(0, MAGIC, true);
-  view.setUint32(4, values.length, true);
-  header[8] = k;
-  header[9] = bits;
-  const body: number[] = [];
+  const blockSize = 2 ** BLOCK_BITS;
+  const blocks = Math.ceil(values.length / blockSize);
+  const index = new Uint8Array(blocks * INDEX_ENTRY_BYTES);
+  const indexView = new DataView(index.buffer);
+  const stream: number[] = [];
   let current = 0;
   let filled = 0;
+  let streamBits = 0;
   const put = (bit: number) => {
     current = (current << 1) | bit;
+    streamBits++;
     if (++filled === 8) {
-      body.push(current);
+      stream.push(current);
       current = 0;
       filled = 0;
     }
   };
   let prev = 0;
-  for (const value of values) {
+  values.forEach((value, i) => {
+    if (i % blockSize === 0) {
+      const at = (i / blockSize) * INDEX_ENTRY_BYTES;
+      indexView.setUint32(at, value % 2 ** 32, true);
+      indexView.setUint32(at + 4, Math.floor(value / 2 ** 32), true);
+      indexView.setUint32(at + 8, streamBits, true);
+      prev = value;
+      return;
+    }
     const gap = value - prev;
     prev = value;
     const quotient = Math.floor(gap / 2 ** k);
     const remainder = gap - quotient * 2 ** k;
-    for (let i = 0; i < quotient; i++) {
+    for (let q = 0; q < quotient; q++) {
       put(1);
     }
     put(0);
-    for (let i = k - 1; i >= 0; i--) {
-      put(Math.floor(remainder / 2 ** i) % 2);
+    for (let bit = k - 1; bit >= 0; bit--) {
+      put(Math.floor(remainder / 2 ** bit) % 2);
     }
-  }
+  });
+  const used = streamBits;
   while (filled !== 0) {
     put(0);
   }
-  const out = new Uint8Array(HEADER_BYTES + body.length);
-  out.set(header);
-  out.set(body, HEADER_BYTES);
+
+  const out = new Uint8Array(HEADER_BYTES + index.length + stream.length);
+  const view = new DataView(out.buffer);
+  view.setUint32(0, MAGIC, true);
+  view.setUint32(4, values.length, true);
+  out[8] = k;
+  out[9] = bits;
+  out[10] = BLOCK_BITS;
+  view.setUint32(11, used, true);
+  out.set(index, HEADER_BYTES);
+  out.set(stream, HEADER_BYTES + index.length);
 
   const decoded = decodeBlockset(out.buffer);
+  const all = decodeAll(decoded);
   if (
     decoded.bits !== bits ||
-    decoded.values.length !== values.length ||
-    values.some((v, i) => decoded.values[i] !== v) ||
+    all.length !== values.length ||
+    values.some((v, i) => all[i] !== v) ||
     kept.some(domain => !isBlocked(decoded, domain))
   ) {
     throw new Error('blocklist does not decode to what was encoded');

@@ -11,8 +11,11 @@ import {
   parseDomain,
 } from '../scripts/blocklist-lib.js';
 import {
+  BLOCK_BITS,
   HEADER_BYTES,
+  INDEX_ENTRY_BYTES,
   MAGIC,
+  decodeAll,
   decodeBlockset,
   hashDomain,
   isBlocked,
@@ -62,7 +65,7 @@ describe('blocklist file', () => {
 
   test('an empty list blocks nothing', () => {
     const {set} = decode([]);
-    assert.equal(set.values.length, 0);
+    assert.equal(set.count, 0);
     assert.equal(isBlocked(set, 'anything.test'), false);
   });
 
@@ -80,6 +83,14 @@ describe('blocklist file', () => {
     assert.equal(view.getUint32(4, true), 1000);
     assert.equal(file[8], 20, 'k');
     assert.equal(file[9], 10 + 20, 'bits = ceil(log2 count) + k');
+    assert.equal(file[10], BLOCK_BITS, 'hashes per block, as a power of two');
+    assert.equal(
+      file.length,
+      HEADER_BYTES +
+        Math.ceil(1000 / 2 ** BLOCK_BITS) * INDEX_ENTRY_BYTES +
+        Math.ceil(view.getUint32(11, true) / 8),
+      'header, index, stream'
+    );
     assert.ok(file.length > HEADER_BYTES);
   });
 
@@ -90,7 +101,7 @@ describe('blocklist file', () => {
       'b.a.tracker.test',
       'other.test',
     ]);
-    assert.equal(set.values.length, 2);
+    assert.equal(set.count, 2);
     assert.ok(
       isBlocked(set, 'b.a.tracker.test'),
       'still blocked via the parent'
@@ -137,7 +148,7 @@ describe('blocklist file', () => {
         hits++;
       }
     }
-    const expected = set.values.length / 2 ** set.bits;
+    const expected = set.count / 2 ** set.bits;
     const observed = hits / trials;
     assert.ok(
       observed < expected * 3,
@@ -179,6 +190,58 @@ describe('blocklist file', () => {
   });
 });
 
+describe('blocks and index', () => {
+  test('every size around a block boundary finds all its names and decodes in full', () => {
+    const next = random(7);
+    const size = 2 ** BLOCK_BITS;
+    for (const n of [
+      1,
+      2,
+      size - 1,
+      size,
+      size + 1,
+      2 * size,
+      2 * size + 1,
+      5 * size + 3,
+    ]) {
+      const domains = Array.from(
+        {length: n},
+        () => `${randomLabel(next, 11)}.test`
+      );
+      const {set} = decode(domains);
+      assert.equal(set.count, n);
+      assert.equal(set.firsts.length, Math.ceil(n / size), `${n}: blocks`);
+      assert.ok(
+        domains.every(d => isBlocked(set, d)),
+        `${n}: found`
+      );
+      const all = decodeAll(set);
+      assert.equal(all.length, n);
+      assert.ok(
+        all.every((v, i) => i === 0 || v > all[i - 1]),
+        `${n}: sorted`
+      );
+      assert.deepEqual(
+        [...set.firsts],
+        [...all].filter((_, i) => i % size === 0),
+        `${n}: the index holds the first hash of each block`
+      );
+    }
+  });
+
+  test('handles hashes above 32 bits (the index holds two words)', () => {
+    const next = random(11);
+    const domains = Array.from(
+      {length: 4000},
+      () => `${randomLabel(next, 10)}.test`
+    );
+    const {set} = decode(domains, 31);
+    assert.ok(set.bits > 32);
+    assert.ok(set.firsts.some(v => v >= 2 ** 32));
+    assert.ok(domains.every(d => isBlocked(set, d)));
+  });
+});
+
 describe('decodeBlockset rejects bad files', () => {
   const good = () => decode(['a.test', 'b.test', 'c.test']).file;
 
@@ -214,9 +277,34 @@ describe('decodeBlockset rejects bad files', () => {
 
   test('truncated body', () => {
     const file = good();
-    assert.throws(() =>
-      decodeBlockset(file.slice(0, file.length - 3).buffer as ArrayBuffer)
+    assert.throws(
+      () =>
+        decodeBlockset(file.slice(0, file.length - 1).buffer as ArrayBuffer),
+      /truncated/
     );
+  });
+
+  test('a damaged index', () => {
+    const domains = Array.from({length: 300}, (_, i) => `d${i}.test`);
+    const good = () => decode(domains).file;
+    const entry = (b: number) => HEADER_BYTES + b * INDEX_ENTRY_BYTES;
+
+    const unordered = good();
+    unordered.copyWithin(entry(1), entry(2), entry(2) + INDEX_ENTRY_BYTES);
+    assert.throws(
+      () => decodeBlockset(unordered.buffer as ArrayBuffer),
+      /index/
+    );
+
+    const beyond = good();
+    new DataView(beyond.buffer).setUint32(entry(1) + 8, 0xffffffff, true);
+    assert.throws(() => decodeBlockset(beyond.buffer as ArrayBuffer), /index/);
+
+    const wrongOffset = good();
+    const view = new DataView(wrongOffset.buffer);
+    view.setUint32(entry(2) + 8, view.getUint32(entry(2) + 8, true) + 1, true);
+    const set = decodeBlockset(wrongOffset.buffer as ArrayBuffer);
+    assert.throws(() => decodeAll(set), /index/, 'a full decode catches it');
   });
 
   test('trailing data', () => {
