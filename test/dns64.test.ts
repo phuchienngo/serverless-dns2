@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import {describe, test} from 'node:test';
 import {parseQuestion} from '../src/dns.js';
-import {synthesize} from '../src/dns64.js';
+import {ipv4onlyAnswer, synthesize} from '../src/dns64.js';
 import type {Question, Result} from '../src/types.js';
 import {
   T,
@@ -11,6 +11,7 @@ import {
   ip6,
   makeQuery,
   makeResponse,
+  nameRdata,
   parseMsg,
   soaRdata,
   type QueryOptions,
@@ -212,5 +213,170 @@ describe('synthesize (RFC 6147)', () => {
       set: r => void nothing.push(r),
     });
     assert.equal(nothing.length, 0, 'nothing synthesized, nothing stored');
+  });
+});
+
+/** The ip6.arpa name of an IPv6 address given as 16 bytes. */
+const reverse6 = (bytes: number[]) =>
+  bytes
+    .flatMap(b => [b >> 4, b & 15])
+    .reverse()
+    .map(n => n.toString(16))
+    .join('.') + '.ip6.arpa';
+
+const nat64 = (v4: string) => [...ip6('64:ff9b::').slice(0, 12), ...ip4(v4)];
+const qPtr = (name: string, o: QueryOptions = {}) =>
+  parseQuestion(makeQuery(name, T.PTR, o));
+
+describe('ipv4onlyAnswer (RFC 7050)', () => {
+  test('AAAA for ipv4only.arpa holds both addresses inside the prefix', () => {
+    const question = parseQuestion(makeQuery('ipv4only.arpa', T.AAAA));
+    const answer = ipv4onlyAnswer(question)!;
+    const m = parseMsg(answer.body);
+    assert.deepEqual(
+      m.answer.map(r => [...r.rdata]),
+      [ip6('64:ff9b::c000:aa'), ip6('64:ff9b::c000:ab')]
+    );
+    assert.ok(m.answer.every(r => r.type === T.AAAA));
+  });
+
+  test('is null for other names and types', () => {
+    const ask = (name: string, type: number) =>
+      ipv4onlyAnswer(parseQuestion(makeQuery(name, type)));
+    assert.equal(ask('ipv4only.arpa', T.A), null);
+    assert.equal(ask('a.ipv4only.arpa', T.AAAA), null);
+    assert.equal(ask('example.com', T.AAAA), null);
+  });
+});
+
+describe('synthesize PTR (RFC 6147 5.3.1)', () => {
+  const name = reverse6(nat64('93.184.216.34'));
+  const ptrAnswer = (...hosts: string[]): Result => ({
+    body: makeResponse({
+      qname: '34.216.184.93.in-addr.arpa',
+      qtype: T.PTR,
+      answer: hosts.map(h => ({type: T.PTR, ttl: 200, rdata: nameRdata(h)})),
+    }),
+    ttl: 200,
+  });
+  const noAnswer = (rcode = 3): Result => ({
+    body: makeResponse({
+      qname: name,
+      qtype: T.PTR,
+      rcode,
+      authority: [{type: T.SOA, ttl: 900, rdata: soaRdata(900)}],
+    }),
+    ttl: 900,
+  });
+
+  test('answers with a CNAME to the IPv4 reverse name and its PTR records', async () => {
+    const asked: Question[] = [];
+    const out = await synthesize(
+      qPtr(name),
+      noAnswer(),
+      async lookup => {
+        asked.push(lookup);
+        return ptrAnswer('a.example.com.', 'b.example.com.');
+      },
+      noMemo
+    );
+    assert.equal(asked.length, 1);
+    assert.equal(asked[0].name, '34.216.184.93.in-addr.arpa');
+    assert.equal(asked[0].type, T.PTR);
+    const m = parseMsg(out.body);
+    assert.equal(m.rcode, 0);
+    assert.deepEqual(
+      m.answer.map(r => r.type),
+      [T.CNAME, T.PTR, T.PTR]
+    );
+    assert.deepEqual(
+      [...m.answer[0].rdata],
+      nameRdata('34.216.184.93.in-addr.arpa')
+    );
+    assert.deepEqual(
+      m.answer.slice(1).map(r => r.name),
+      ['34.216.184.93.in-addr.arpa.', '34.216.184.93.in-addr.arpa.']
+    );
+    assert.deepEqual(
+      m.answer.slice(1).map(r => [...r.rdata]),
+      [nameRdata('a.example.com'), nameRdata('b.example.com')]
+    );
+    assert.equal(out.ttl, 200);
+  });
+
+  test('also when the upstream answered NOERROR with nothing', async () => {
+    const out = await synthesize(
+      qPtr(name),
+      noAnswer(0),
+      async () => ptrAnswer('a.example.com.'),
+      noMemo
+    );
+    assert.equal(parseMsg(out.body).answer.length, 2);
+  });
+
+  test('not outside the prefix, for private addresses, or for DO without CD', async () => {
+    const lookup = async () => ptrAnswer('a.example.com.');
+    const result = noAnswer();
+    const other = reverse6(ip6('2001:db8::1'));
+    const inside = (n: string) => qPtr(n);
+    assert.equal(
+      await synthesize(inside(other), result, lookup, noMemo),
+      result
+    );
+    const priv = reverse6(nat64('10.1.2.3'));
+    assert.equal(
+      await synthesize(inside(priv), result, lookup, noMemo),
+      result
+    );
+    assert.equal(
+      await synthesize(qPtr(name, {do: true}), result, lookup, noMemo),
+      result
+    );
+    assert.equal(
+      await synthesize(qPtr('1.0.0.127.in-addr.arpa'), result, lookup, noMemo),
+      result,
+      'an IPv4 reverse name'
+    );
+    assert.equal(
+      await synthesize(qPtr('x.' + name), result, lookup, noMemo),
+      result,
+      'a name longer than an address'
+    );
+  });
+
+  test('leaves the answer alone when the IPv4 name has no PTR or the lookup fails', async () => {
+    const result = noAnswer();
+    for (const lookup of [
+      async () => ptrAnswer(),
+      async () => noAnswer(),
+      async (): Promise<Result> => {
+        throw new Error('down');
+      },
+    ]) {
+      assert.equal(
+        await synthesize(qPtr(name), result, lookup, noMemo),
+        result
+      );
+    }
+  });
+
+  test('a PTR that the upstream does answer is left alone', async () => {
+    const real: Result = {
+      body: makeResponse({
+        qname: name,
+        qtype: T.PTR,
+        answer: [{type: T.PTR, ttl: 60, rdata: nameRdata('real.example.com')}],
+      }),
+      ttl: 60,
+    };
+    let asked = 0;
+    const out = await synthesize(
+      qPtr(name),
+      real,
+      async () => (asked++, ptrAnswer('a.example.com.')),
+      noMemo
+    );
+    assert.equal(out, real);
+    assert.equal(asked, 0);
   });
 });

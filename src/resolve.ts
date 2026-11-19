@@ -32,7 +32,7 @@ import {
   stripOpt,
 } from './dns.js';
 import {cookieOption} from './cookie.js';
-import {synthesize} from './dns64.js';
+import {ipv4onlyAnswer, synthesize} from './dns64.js';
 import {addEch, startEchProbe} from './ech.js';
 import {makeEcs} from './ecs.js';
 import {ddrAnswer, isDdr, localAnswer, typeAnswer} from './local.js';
@@ -103,7 +103,8 @@ export async function resolve(
   q: Question,
   options: ResolveOptions
 ): Promise<Result> {
-  let result = await resolveQuestion(q, options);
+  let result =
+    (options.dns64 && ipv4onlyAnswer(q)) || (await resolveQuestion(q, options));
   if (options.dns64) {
     const key = `${cacheKey(options.host, q, ecsOf(options))}/dns64`;
     result = await synthesize(q, result, a => resolveQuestion(a, options), {

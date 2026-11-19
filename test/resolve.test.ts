@@ -922,3 +922,44 @@ describe('DNS64 memo', () => {
     assert.ok(second.msg.answer[0].ttl <= first.msg.answer[0].ttl);
   });
 });
+
+describe('DNS64 well-known name and PTR', () => {
+  test('ipv4only.arpa AAAA is answered locally, only with dns64', async () => {
+    const {msg} = await ask('ipv4only.arpa', T.AAAA, {}, {dns64: true});
+    assert.equal(msg.answer.length, 2);
+    assert.deepEqual([...msg.answer[0].rdata], ip6('64:ff9b::c000:aa'));
+    assert.equal(upstream.calls.length, 0);
+    await ask('ipv4only.arpa', T.AAAA);
+    assert.equal(upstream.calls.length, 1, 'forwarded without dns64');
+  });
+
+  test('PTR of an address in the prefix follows the IPv4 reverse name', async () => {
+    useUpstream(q => {
+      const {name, type} = q.question[0];
+      if (name === '34.216.184.93.in-addr.arpa.') {
+        return makeResponse({
+          qname: name,
+          qtype: type,
+          answer: [{type: T.PTR, ttl: 300, rdata: [3, 0x61, 0x62, 0x63, 0]}],
+        });
+      }
+      return makeResponse({
+        qname: name,
+        qtype: type,
+        rcode: 3,
+        authority: [{type: T.SOA, ttl: 900, rdata: soaRdata(900)}],
+      });
+    });
+    const name =
+      '2.2.8.d.8.b.d.5' + '.0'.repeat(16) + '.b.9.f.f.4.6.0.0.ip6.arpa';
+    const plain = await ask(name, T.PTR);
+    assert.equal(plain.msg.rcode, 3, 'NXDOMAIN without dns64');
+    const {msg} = await ask(name, T.PTR, {}, {dns64: true});
+    assert.equal(msg.rcode, 0);
+    assert.deepEqual(
+      msg.answer.map(r => r.type),
+      [T.CNAME, T.PTR]
+    );
+    assert.equal(msg.answer[1].name, '34.216.184.93.in-addr.arpa.');
+  });
+});

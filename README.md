@@ -39,7 +39,10 @@ Three optional features, none of which touches the caches or their TTLs.
   The TTL is the smaller of the A record's and the AAAA answer's (RFC 6147 5.1.7). Not done for a query with DO and no CD
   (it could not validate), nor for private, loopback, documentation, multicast and other non-global addresses. A CNAME chain
   is flattened: the new records are owned by the name asked. It costs one more lookup of the A record (itself cached), and
-  the result is kept in the isolate's memory. Needs a NAT64 gateway on the client's network; PTR for the prefix is not translated.
+  the result is kept in the isolate's memory. Needs a NAT64 gateway on the client's network.
+  Also with `?dns64`: `AAAA ipv4only.arpa` is answered locally with the two well-known addresses inside the prefix, which is
+  how clients discover it (RFC 7050); and a PTR for an address inside the prefix, which the upstream cannot answer, gets a
+  CNAME to the reverse name of the embedded IPv4 address followed by that name's PTR records (RFC 6147 5.3.1).
 - **Resolver information** (RFC 9606): `RESINFO` for this gateway's host name answers locally with `exterr=3,15,19,23`
   (the Extended DNS Errors it produces) and `infourl=https://<host>/`. Clients that found the gateway through DDR can ask for it.
 - **DNS Cookies** (RFC 7873): set the secret with `npx wrangler pages secret put COOKIE_SECRET --project-name serverless-dns2`
