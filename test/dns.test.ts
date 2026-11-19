@@ -6,11 +6,12 @@
 
 import assert from 'node:assert/strict';
 import {describe, test} from 'node:test';
-import {isTruncated, utf8} from '../src/wire.js';
+import {isTruncated, latin1, utf8} from '../src/wire.js';
 import {alpnValue, svcbRdata} from '../src/svcb.js';
 import {EDE_BLOCKED} from '../src/constants.js';
 import {
   addOptOption,
+  rewriteOpt,
   cnameTargets,
   copyRd,
   edeOption,
@@ -797,5 +798,113 @@ describe('small wire helpers', () => {
     const cut = msg.slice();
     cut[2] |= 0x02;
     assert.equal(isTruncated(cut), true);
+  });
+});
+
+describe('rewriteOpt (all OPT changes in one pass)', () => {
+  const sizes = [0, 1, 100, 400, 455, 464, 600];
+  const response = (extra: number) =>
+    makeResponse({
+      qname: 'a.test',
+      qtype: T.TXT,
+      answer: [
+        {type: T.TXT, ttl: 60, rdata: [extra, ...new Array(extra).fill(7)]},
+      ],
+      opt: {
+        options: [
+          {code: 8, data: [0, 1, 24, 24, 203, 0, 113]},
+          {code: 15, data: [0, 15]},
+          {code: 8, data: [0, 1, 16, 16, 198, 51]},
+        ],
+      },
+    });
+  const cookie = [0, 10, 0, 8, 1, 2, 3, 4, 5, 6, 7, 8];
+  const ede = edeOption(3, '');
+
+  test('gives the same bytes as making the changes one by one', () => {
+    for (const n of sizes) {
+      const resp = response(n);
+      const oneByOne = padResponse(
+        addOptOption(addOptOption(removeOptOption(resp, 8), ede), cookie)
+      );
+      const together = rewriteOpt(resp, {
+        remove: 8,
+        add: [ede, cookie],
+        pad: true,
+      });
+      assert.deepEqual(together, oneByOne, `size ${n}`);
+    }
+  });
+
+  test('the result parses, with the right counts and OPT length', () => {
+    for (const n of sizes) {
+      const out = rewriteOpt(response(n), {
+        remove: 8,
+        add: [ede, cookie],
+        pad: true,
+      });
+      const m = parseMsg(out);
+      assert.equal(m.optCount, 1);
+      assert.equal(out.length % 468, 0, `size ${n}`);
+      assert.deepEqual(
+        m.opt!.options.map(o => o.code),
+        [15, 15, 10, 12]
+      );
+      assert.equal(m.answer.length, 1);
+    }
+  });
+
+  test('padding alone, removal alone and adding alone', () => {
+    const resp = response(10);
+    assert.equal(rewriteOpt(resp, {pad: true}).length % 468, 0);
+    const without = parseMsg(rewriteOpt(resp, {remove: 8}));
+    assert.deepEqual(
+      without.opt!.options.map(o => o.code),
+      [15]
+    );
+    assert.deepEqual(
+      parseMsg(rewriteOpt(resp, {add: [cookie]})).opt!.options.map(o => o.code),
+      [8, 15, 8, 10]
+    );
+  });
+
+  test('nothing to do, no OPT record or no such option: the same message', () => {
+    const resp = response(10);
+    assert.equal(rewriteOpt(resp, {}), resp);
+    assert.equal(rewriteOpt(resp, {remove: 99}), resp);
+    const noOpt = makeResponse({qname: 'a.test', qtype: T.A, opt: false});
+    assert.equal(rewriteOpt(noOpt, {add: [cookie], pad: true}), noOpt);
+  });
+
+  test('the input is not changed', () => {
+    const resp = response(30);
+    const before = resp.slice();
+    rewriteOpt(resp, {remove: 8, add: [cookie], pad: true});
+    assert.deepEqual(resp, before);
+  });
+});
+
+describe('latin1 and lowerAscii', () => {
+  test('latin1 keeps every byte value, for short and long input', () => {
+    const all = Uint8Array.from({length: 256}, (_, i) => i);
+    const text = latin1(all);
+    assert.equal(text.length, 256);
+    assert.deepEqual(
+      [...text].map(c => c.charCodeAt(0)),
+      [...all]
+    );
+    const long = new Uint8Array(60000).fill(0xe9);
+    assert.equal(latin1(long).length, 60000);
+    assert.equal(latin1(new Uint8Array(0)), '');
+  });
+
+  test('lowerAscii changes ASCII capitals only', () => {
+    assert.equal(lowerAscii('WwW.Example.COM'), 'www.example.com');
+    assert.equal(lowerAscii('already.lower'), 'already.lower');
+    assert.equal(
+      lowerAscii('\u00c0B'),
+      '\u00c0b',
+      'a non-ASCII letter is left alone'
+    );
   });
 });

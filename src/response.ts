@@ -190,20 +190,74 @@ function splice(
   return out;
 }
 
+/** Changes to the options of the OPT record of a response. */
+export interface OptEdit {
+  /** Remove every option with this code. */
+  remove?: number;
+  /** Options to add, each as its code, length and data. */
+  add?: number[][];
+  /** Add a Padding option to make the size a multiple of 468 bytes. */
+  pad?: boolean;
+}
+
 /**
- * Adds an option to the OPT record of a response.
- * @return The response unchanged if it has no OPT record.
+ * Makes all the given changes to the OPT record in one pass: the message is
+ * read once and copied once, however many changes there are. Padding is
+ * sized last, after the other changes (RFC 7830, RFC 8467).
+ * @return `resp` itself if there is nothing to change, it has no OPT record
+ *     or cannot be edited; the input is never changed.
  */
-export function addOptOption(resp: Uint8Array, option: number[]): Uint8Array {
+export function rewriteOpt(resp: Uint8Array, edit: OptEdit): Uint8Array {
+  const {remove, add = [], pad = false} = edit;
+  if (remove === undefined && !add.length && !pad) {
+    return resp;
+  }
   try {
     const [opt] = optRecords(resp);
     if (!opt) {
       return resp;
     }
-    const out = splice(resp, [{from: opt.end, to: opt.end, insert: option}]);
+    const view = new DataView(resp.buffer, resp.byteOffset, resp.byteLength);
+    const unwanted =
+      remove === undefined
+        ? []
+        : readOptions(view, opt).options.filter(o => o.code === remove);
+    if (!unwanted.length && !add.length && !pad) {
+      return resp;
+    }
+    const removed = unwanted.reduce((n, o) => n + o.end - o.start, 0);
+    const added = add.reduce((n, o) => n + o.length, 0);
+    const size = resp.length - removed + added;
+    const padding = pad
+      ? 4 + ((PADDING_BLOCK - ((size + 4) % PADDING_BLOCK)) % PADDING_BLOCK)
+      : 0;
+    const out = new Uint8Array(size + padding);
+    let at = 0;
+    let from = 0;
+    const copyTo = (end: number) => {
+      out.set(resp.subarray(from, end), at);
+      at += end - from;
+    };
+    for (const o of unwanted) {
+      copyTo(o.start);
+      from = o.end;
+    }
+    copyTo(opt.end);
+    for (const option of add) {
+      out.set(option, at);
+      at += option.length;
+    }
+    if (pad) {
+      out[at + 1] = OPTION_PADDING; // The code is 12; the data stays zero.
+      out[at + 2] = (padding - 4) >> 8;
+      out[at + 3] = (padding - 4) & 255;
+      at += padding;
+    }
+    from = opt.end;
+    copyTo(resp.length);
     new DataView(out.buffer).setUint16(
       opt.start + 8,
-      opt.length + option.length
+      opt.length - removed + added + padding
     );
     return out;
   } catch {
@@ -212,32 +266,19 @@ export function addOptOption(resp: Uint8Array, option: number[]): Uint8Array {
 }
 
 /**
+ * Adds an option to the OPT record of a response.
+ * @return The response unchanged if it has no OPT record.
+ */
+export function addOptOption(resp: Uint8Array, option: number[]): Uint8Array {
+  return rewriteOpt(resp, {add: [option]});
+}
+
+/**
  * Removes every EDNS option with the given code from the OPT record.
  * @return The message unchanged if it has no such option or cannot be read.
  */
 export function removeOptOption(resp: Uint8Array, code: number): Uint8Array {
-  try {
-    const view = new DataView(resp.buffer, resp.byteOffset, resp.byteLength);
-    const [opt] = optRecords(resp);
-    if (!opt) {
-      return resp;
-    }
-    const unwanted = readOptions(view, opt).options.filter(
-      o => o.code === code
-    );
-    if (!unwanted.length) {
-      return resp;
-    }
-    const out = splice(
-      resp,
-      unwanted.map(o => ({from: o.start, to: o.end}))
-    );
-    const removed = unwanted.reduce((n, o) => n + o.end - o.start, 0);
-    new DataView(out.buffer).setUint16(opt.start + 8, opt.length - removed);
-    return out;
-  } catch {
-    return resp; // Not a message we can edit.
-  }
+  return rewriteOpt(resp, {remove: code});
 }
 
 /**
@@ -266,12 +307,7 @@ export function stripOpt(resp: Uint8Array): Uint8Array {
  * a client that padded its query (RFC 7830, RFC 8467).
  */
 export function padResponse(resp: Uint8Array): Uint8Array {
-  const size =
-    (PADDING_BLOCK - ((resp.length + 4) % PADDING_BLOCK)) % PADDING_BLOCK;
-  return addOptOption(
-    resp,
-    ednsOption(OPTION_PADDING, new Array(size).fill(0))
-  );
+  return rewriteOpt(resp, {pad: true});
 }
 
 /**

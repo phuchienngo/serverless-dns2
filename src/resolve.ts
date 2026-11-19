@@ -19,13 +19,11 @@ import {
   TYPE_AAAA,
 } from './constants.js';
 import {
-  addOptOption,
   makeRecord,
   copyRd,
   edeOption,
-  padResponse,
-  removeOptOption,
   respond,
+  rewriteOpt,
   stripOpt,
 } from './response.js';
 import {encodeName, parseAnswers, rcodeOf} from './wire.js';
@@ -39,6 +37,9 @@ import {ddrAnswer, isDdr, localAnswer, typeAnswer} from './local.js';
 import type {Question, ResolveOptions, Result} from './types.js';
 import {askUpstream, coalesce, forward, queryFlags} from './upstream.js';
 
+/** Names that need no escaping in a URL (the usual case: faster to test). */
+const SAFE_NAME = /^[a-z0-9.-]+$/;
+
 /**
  * Cache key: name, type, client subnet and DNSSEC flags.
  * @return A URL, as the Cache API only accepts requests as keys.
@@ -47,7 +48,7 @@ function cacheKey(host: string, q: Question, ecs: number[] | null): string {
   const subnet = ecs ? ecs.slice(4).join('-') : 'none';
   const {dnssec, cd, ad} = queryFlags(q);
   const flags = `${+dnssec}${+cd}${+ad}`;
-  const name = encodeURIComponent(q.name);
+  const name = SAFE_NAME.test(q.name) ? q.name : encodeURIComponent(q.name);
   return `https://${host}/__cache/${name}/${q.type}/${subnet}/${flags}`;
 }
 
@@ -132,20 +133,22 @@ async function shape(
   }
   if (options.ecs) {
     body = echoClientEcs(body, q.ecs);
-  } else {
-    // RFC 7871 7.2.2: no ECS option in a response to a query without one.
-    body = removeOptOption(body, OPTION_ECS);
   }
+  const added: number[][] = [];
   if (result.stale) {
     const code =
       rcodeOf(body) === RCODE_NXDOMAIN ? EDE_STALE_NXDOMAIN : EDE_STALE_ANSWER;
-    body = addOptOption(body, edeOption(code, ''));
+    added.push(edeOption(code, ''));
   }
   const cookie = await cookieOption(q, options.ip, options.env.COOKIE_SECRET);
   if (cookie) {
-    body = addOptOption(body, cookie);
+    added.push(cookie);
   }
-  return q.padding ? padResponse(body) : body;
+  return rewriteOpt(body, {
+    remove: options.ecs ? undefined : OPTION_ECS, // RFC 7871 7.2.2.
+    add: added,
+    pad: q.padding,
+  });
 }
 
 async function resolveQuestion(
