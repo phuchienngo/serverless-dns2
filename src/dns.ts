@@ -5,6 +5,7 @@
 import {MAX_QUERY} from './config.js';
 import {
   CLASS_IN,
+  OPTION_COOKIE,
   OPTION_EDE,
   OPTION_PADDING,
   TYPE_CNAME,
@@ -274,6 +275,12 @@ interface QueryOpt {
   flags: number;
   version: number;
   padding: boolean;
+  cookie: number[] | null;
+}
+
+/** RFC 7873 4: a client cookie of 8 bytes, then a server cookie of 8-32. */
+function validCookie(length: number): boolean {
+  return length === 8 || (length >= 16 && length <= 40);
 }
 
 /**
@@ -292,13 +299,23 @@ function findOpt(buf: Uint8Array): {opt: QueryOpt | null; malformed: boolean} {
     }
     const [first] = found;
     const {options, exact} = readOptions(view, first);
+    const cookie = options.find(o => o.code === OPTION_COOKIE);
+    const cookieBytes = cookie
+      ? [...buf.subarray(cookie.start + 4, cookie.end)]
+      : null;
     return {
       opt: {
         flags: view.getUint16(first.start + 6),
         version: buf[first.start + 5],
         padding: options.some(o => o.code === OPTION_PADDING),
+        cookie: cookieBytes,
       },
-      malformed: found.length > 1 || first.start - first.name !== 1 || !exact,
+      // A cookie of another length is FORMERR too (RFC 7873 5.2.2).
+      malformed:
+        found.length > 1 ||
+        first.start - first.name !== 1 ||
+        !exact ||
+        (cookieBytes !== null && !validCookie(cookieBytes.length)),
     };
   } catch {
     return {opt: null, malformed: true}; // The records do not parse.
@@ -358,6 +375,7 @@ export function parseQuestion(buf: Uint8Array): Question {
     opcode: (buf[2] >> 3) & 15,
     ednsVersion: opt?.version ?? 0,
     padding: opt?.padding ?? false,
+    cookie: opt?.cookie ?? null,
     malformed,
   };
 }
@@ -419,6 +437,7 @@ export function makeQuestion(
     opcode: 0,
     ednsVersion: 0,
     padding: false,
+    cookie: null,
     malformed: false,
   };
 }

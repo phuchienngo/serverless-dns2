@@ -48,6 +48,12 @@ export const REDIRECTS: Record<string, string> = {
   'medium.com': 'voz.vn',
 };
 
+/**
+ * DNS64 (RFC 6147), which a request asks for with `?dns64`: the NAT64 prefix
+ * (a /96, RFC 6052) that A records are embedded in. Default: well-known prefix.
+ */
+export const DNS64_PREFIX = [0, 0x64, 0xff, 0x9b, 0, 0, 0, 0, 0, 0, 0, 0];
+
 /** Answer ANY with a minimal HINFO, saving an upstream call (RFC 8482). */
 export const BLOCK_ANY = true;
 

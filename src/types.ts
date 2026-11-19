@@ -25,6 +25,8 @@ export interface Question {
   ednsVersion: number;
   /** Whether the query has an EDNS Padding option (RFC 7830). */
   padding: boolean;
+  /** The EDNS Cookie option (RFC 7873): client cookie, then server cookie. */
+  cookie: number[] | null;
   /** The OPT record is invalid (RFC 6891 6.1.1): answer FORMERR. */
   malformed: boolean;
 }
@@ -41,6 +43,8 @@ export interface Result {
 export interface Env {
   /** Static assets of the Pages project; holds the blocklist. */
   ASSETS?: Fetcher;
+  /** Secret for DNS Cookies (RFC 7873); without it cookies are ignored. */
+  COOKIE_SECRET?: string;
 }
 
 /** Per-request values supplied by the platform adapter. */
@@ -55,6 +59,8 @@ export interface ResolveOptions extends Context {
   host: string;
   /** Overrides the subnet derived from `ip`; null sends none. */
   ecs?: number[] | null;
+  /** Synthesize AAAA records from A records (DNS64, RFC 6147). */
+  dns64?: boolean;
   /** Filled with durations in ms (see `serverTiming`). */
   timing?: Record<string, number>;
 }

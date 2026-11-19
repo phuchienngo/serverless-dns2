@@ -767,3 +767,158 @@ describe('best-effort ECH for Cloudflare-hosted names', () => {
     );
   });
 });
+
+describe('resolver information (RFC 9606)', () => {
+  test('RESINFO for the gateway host lists the EDE codes and an info page', async () => {
+    const {msg} = await ask('dns.test', T.RESINFO);
+    assert.equal(msg.rcode, 0);
+    assert.equal(msg.answer[0].type, T.RESINFO);
+    const strings: string[] = [];
+    const rdata = msg.answer[0].rdata;
+    for (let i = 0; i < rdata.length; i += 1 + rdata[i]) {
+      strings.push(
+        Buffer.from(rdata.subarray(i + 1, i + 1 + rdata[i])).toString()
+      );
+    }
+    assert.deepEqual(strings, [
+      'exterr=3,15,19,23',
+      'infourl=https://dns.test/',
+    ]);
+    assert.equal(upstream.calls.length, 0);
+  });
+
+  test('RESINFO for another name is forwarded', async () => {
+    await ask(fresh(), T.RESINFO);
+    assert.equal(upstream.calls.length, 1);
+  });
+});
+
+describe('DNS64 (RFC 6147)', () => {
+  const v4 = ip4('93.184.216.34');
+  const upstreamWith = (aaaa: boolean, address = v4, rcode = 0) =>
+    useUpstream(q => {
+      const {name, type} = q.question[0];
+      const answer =
+        type === T.A
+          ? [{type: T.A, ttl: 120, rdata: address}]
+          : type === T.AAAA && aaaa
+            ? [{type: T.AAAA, ttl: 300, rdata: ip6('2001:db8::1')}]
+            : [];
+      return makeResponse({
+        qname: name,
+        qtype: type,
+        rcode,
+        answer,
+        authority: answer.length
+          ? []
+          : [{type: T.SOA, ttl: 900, rdata: soaRdata(60)}],
+        opt: {do: q.opt?.do},
+      });
+    });
+
+  test('AAAA is made from the A record when there is none', async () => {
+    upstreamWith(false);
+    const {msg} = await ask(fresh(), T.AAAA, {}, {dns64: true});
+    assert.equal(msg.rcode, 0);
+    assert.equal(msg.answer.length, 1);
+    assert.equal(msg.answer[0].type, T.AAAA);
+    assert.deepEqual([...msg.answer[0].rdata], ip6('64:ff9b::5db8:d822'));
+    assert.equal(
+      msg.answer[0].ttl,
+      60,
+      'smaller of the A TTL and the SOA minimum'
+    );
+  });
+
+  test('a real AAAA is left alone, and so is everything when DNS64 is off', async () => {
+    upstreamWith(true);
+    let {msg} = await ask(fresh(), T.AAAA, {}, {dns64: true});
+    assert.deepEqual([...msg.answer[0].rdata], ip6('2001:db8::1'));
+    upstreamWith(false);
+    ({msg} = await ask(fresh(), T.AAAA));
+    assert.equal(msg.answer.length, 0);
+  });
+
+  test('not for private addresses, nor for DO without CD', async () => {
+    upstreamWith(false, ip4('10.1.2.3'));
+    let {msg} = await ask(fresh(), T.AAAA, {}, {dns64: true});
+    assert.equal(msg.answer.length, 0);
+    upstreamWith(false);
+    ({msg} = await ask(fresh(), T.AAAA, {do: true}, {dns64: true}));
+    assert.equal(msg.answer.length, 0);
+    ({msg} = await ask(fresh(), T.AAAA, {do: true, cd: true}, {dns64: true}));
+    assert.equal(msg.answer.length, 1);
+  });
+
+  test('a failing A lookup leaves the AAAA answer as it was', async () => {
+    useUpstream(q => {
+      if (q.question[0].type === T.A) {
+        throw new Error('down');
+      }
+      return makeResponse({qname: q.question[0].name, qtype: T.AAAA});
+    });
+    const {msg} = await ask(fresh(), T.AAAA, {}, {dns64: true});
+    assert.equal(msg.rcode, 0);
+    assert.equal(msg.answer.length, 0);
+  });
+});
+
+describe('DNS Cookies (RFC 7873)', () => {
+  const client = [1, 2, 3, 4, 5, 6, 7, 8];
+  const env = {COOKIE_SECRET: 's3cret'};
+
+  test('the client cookie comes back with a server cookie tied to the client', async () => {
+    const get = async (ip: string) =>
+      (
+        await ask(fresh(), T.A, {cookie: client}, {env, ip})
+      ).msg.opt!.options.find(o => o.code === 10)!.data;
+    const one = await get('192.0.2.1');
+    assert.equal(one.length, 16);
+    assert.deepEqual([...one.subarray(0, 8)], client);
+    assert.deepEqual([...(await get('192.0.2.1'))], [...one]);
+    assert.notDeepEqual([...(await get('192.0.2.2'))], [...one]);
+  });
+
+  test('no secret, no cookie in the query or no EDNS: nothing is added', async () => {
+    const cookieOf = (m: Msg) => m.opt?.options.find(o => o.code === 10);
+    assert.equal(
+      cookieOf((await ask(fresh(), T.A, {cookie: client})).msg),
+      undefined
+    );
+    assert.equal(cookieOf((await ask(fresh(), T.A, {}, {env})).msg), undefined);
+  });
+
+  test('a cookie of a wrong length is FORMERR', async () => {
+    const {msg} = await ask(fresh(), T.A, {cookie: [1, 2, 3]}, {env});
+    assert.equal(msg.rcode, 1);
+    assert.equal(upstream.calls.length, 0);
+  });
+});
+
+describe('DNS64 memo', () => {
+  test('the A lookup is not repeated for the same name', async () => {
+    useUpstream(q => {
+      const {name, type} = q.question[0];
+      return makeResponse({
+        qname: name,
+        qtype: type,
+        answer:
+          type === T.A
+            ? [{type: T.A, ttl: 300, rdata: ip4('93.184.216.34')}]
+            : [],
+        authority:
+          type === T.A ? [] : [{type: T.SOA, ttl: 900, rdata: soaRdata(300)}],
+      });
+    });
+    const name = fresh();
+    const first = await ask(name, T.AAAA, {}, {dns64: true});
+    const calls = upstream.calls.length;
+    const second = await ask(name, T.AAAA, {}, {dns64: true});
+    assert.equal(upstream.calls.length, calls, 'nothing new asked');
+    assert.deepEqual(
+      [...second.msg.answer[0].rdata],
+      [...first.msg.answer[0].rdata]
+    );
+    assert.ok(second.msg.answer[0].ttl <= first.msg.answer[0].ttl);
+  });
+});

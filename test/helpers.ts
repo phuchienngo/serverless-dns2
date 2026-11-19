@@ -27,6 +27,7 @@ export const T = {
   SVCB: 64,
   HTTPS: 65,
   ANY: 255,
+  RESINFO: 261,
 };
 
 /** A name in wire format (no compression). */
@@ -62,6 +63,8 @@ export interface QueryOptions {
   /** ECS option: source prefix length and the address bytes. */
   ecs?: {family: 1 | 2; prefix: number; address: number[]};
   qclass?: number;
+  /** Raw bytes of an EDNS Cookie option. */
+  cookie?: number[];
 }
 
 /** Builds a DNS query message. */
@@ -87,6 +90,9 @@ export function makeQuery(
       0,
       ...bytes
     );
+  }
+  if (o.cookie) {
+    options.push(...u16(10), ...u16(o.cookie.length), ...o.cookie);
   }
   if (o.padding !== undefined) {
     options.push(

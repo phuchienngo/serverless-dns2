@@ -101,6 +101,7 @@ export const TYPE_OPT = RECORD_TYPES.OPT;
 export const TYPE_SVCB = RECORD_TYPES.SVCB;
 export const TYPE_HTTPS = RECORD_TYPES.HTTPS;
 export const TYPE_ANY = RECORD_TYPES.ANY;
+export const TYPE_RESINFO = RECORD_TYPES.RESINFO;
 
 /** Query types that no recursive resolver answers (RFC 6895, 6891, 8945). */
 export const TYPES_FORMERR = [
@@ -130,6 +131,7 @@ export const RCODE_BADVERS = 16;
 
 /** EDNS option codes. */
 export const OPTION_ECS = 8; // RFC 7871.
+export const OPTION_COOKIE = 10; // RFC 7873.
 export const OPTION_PADDING = 12; // RFC 7830.
 export const OPTION_EDE = 15; // RFC 8914.
 

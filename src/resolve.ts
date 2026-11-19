@@ -31,6 +31,8 @@ import {
   respond,
   stripOpt,
 } from './dns.js';
+import {cookieOption} from './cookie.js';
+import {synthesize} from './dns64.js';
 import {addEch, startEchProbe} from './ech.js';
 import {makeEcs} from './ecs.js';
 import {ddrAnswer, isDdr, localAnswer, typeAnswer} from './local.js';
@@ -47,6 +49,14 @@ function cacheKey(host: string, q: Question, ecs: number[] | null): string {
   const flags = `${+dnssec}${+cd}${+ad}`;
   const name = encodeURIComponent(q.name);
   return `https://${host}/__cache/${name}/${q.type}/${subnet}/${flags}`;
+}
+
+/** The client subnet to send: the one chosen by the client, else its IP's. */
+function ecsOf(options: ResolveOptions): number[] | null {
+  if (options.ecs !== undefined) {
+    return options.ecs;
+  }
+  return options.ip ? makeEcs(options.ip) : null;
 }
 
 /**
@@ -93,7 +103,17 @@ export async function resolve(
   q: Question,
   options: ResolveOptions
 ): Promise<Result> {
-  const result = await resolveQuestion(q, options);
+  let result = await resolveQuestion(q, options);
+  if (options.dns64) {
+    const key = `${cacheKey(options.host, q, ecsOf(options))}/dns64`;
+    result = await synthesize(q, result, a => resolveQuestion(a, options), {
+      get: () => {
+        const hit = lookupLocal(key, q);
+        return hit && !hit.refresh ? hit.result : null;
+      },
+      set: synthesized => store(undefined, key, synthesized),
+    });
+  }
   let body = copyRd(result.body, q.rd);
   if (!options.ecs) {
     // RFC 7871 7.2.2: no ECS option in a response to a query without one.
@@ -108,6 +128,10 @@ export async function resolve(
       const nxdomain = rcodeOf(body) === RCODE_NXDOMAIN;
       const code = nxdomain ? EDE_STALE_NXDOMAIN : EDE_STALE_ANSWER;
       body = addOptOption(body, edeOption(code, ''));
+    }
+    const cookie = await cookieOption(q, options.ip, options.env.COOKIE_SECRET);
+    if (cookie) {
+      body = addOptOption(body, cookie);
     }
     if (q.padding) {
       body = padResponse(body); // Last, so that the size is final.
@@ -158,12 +182,7 @@ async function answer(q: Question, options: ResolveOptions): Promise<Result> {
     return typed;
   }
 
-  let ecs = null;
-  if (options.ecs !== undefined) {
-    ecs = options.ecs;
-  } else if (options.ip) {
-    ecs = makeEcs(options.ip);
-  }
+  const ecs = ecsOf(options);
 
   const key = cacheKey(host, q, ecs);
   const fetchFresh = async () => {

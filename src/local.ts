@@ -8,6 +8,10 @@ import {BLOCK_ANY, BLOCK_UNDELEGATED, REDIRECTS} from './config.js';
 import {
   ALPN_HTTP,
   CLASS_IN,
+  EDE_BLOCKED,
+  EDE_NETWORK_ERROR,
+  EDE_STALE_ANSWER,
+  EDE_STALE_NXDOMAIN,
   RCODE_BADVERS,
   RCODE_FORMERR,
   RCODE_NOERROR,
@@ -26,6 +30,7 @@ import {
   TYPE_ANY,
   TYPE_HINFO,
   TYPE_HTTPS,
+  TYPE_RESINFO,
   TYPE_SVCB,
 } from './constants.js';
 import {
@@ -58,6 +63,23 @@ export function ddrAnswer(
   ]);
   const record = makeRecord(TYPE_SVCB, TTL_DDR, rdata);
   return respond(q, RCODE_NOERROR, [record], undefined, hints);
+}
+
+/**
+ * Resolver information (RFC 9606): the RESINFO record of this gateway's host,
+ * listing the Extended DNS Errors it produces and a page about it.
+ */
+function resinfo(q: Question, host: string): Result {
+  const keys = [
+    `exterr=${[EDE_STALE_ANSWER, EDE_BLOCKED, EDE_STALE_NXDOMAIN, EDE_NETWORK_ERROR].join(',')}`,
+    `infourl=https://${host}/`,
+  ];
+  const rdata = keys.flatMap(key => {
+    const bytes = [...encoder.encode(key)];
+    return [bytes.length, ...bytes];
+  });
+  const record = makeRecord(TYPE_RESINFO, TTL_DDR, rdata);
+  return {body: respond(q, RCODE_NOERROR, [record]), ttl: TTL_DDR};
 }
 
 /** @return Whether this is the DDR query for this gateway (RFC 9462). */
@@ -127,6 +149,9 @@ export function localAnswer(q: Question, host: string): Result | null {
   }
   if (isDdr(q, host)) {
     return null; // Needs the resolver's addresses: see resolve.ts.
+  }
+  if (q.type === TYPE_RESINFO && q.name === host) {
+    return resinfo(q, host);
   }
   if (q.name === 'resolver.arpa' || q.name.endsWith('.resolver.arpa')) {
     // RFC 9462: reserved for DDR; never forwarded.
