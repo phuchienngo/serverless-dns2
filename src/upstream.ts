@@ -132,7 +132,9 @@ export async function askUpstream(
   flags: QueryFlags
 ): Promise<Result> {
   const target = REDIRECTS[q.name];
-  if (target && (q.type === TYPE_A || q.type === TYPE_AAAA)) {
+  // The redirect answer is made here, unsigned: a client that asks for DNSSEC
+  // records (DO) gets the real answer, like ECH and DNS64 do.
+  if (!q.dnssecOk && target && (q.type === TYPE_A || q.type === TYPE_AAAA)) {
     const question = [...encodeName(target), ...u16(q.type), 0, 1];
     const resp = await forward(env, buildQuery(question, ecs, flags));
     return redirected(resp, q);

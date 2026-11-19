@@ -493,6 +493,16 @@ describe('redirects (config.ts REDIRECTS)', () => {
     assert.equal(upstream.calls.length, 0);
   });
 
+  test('a client that asks for DNSSEC records (DO) gets the real answers, not unsigned made-up ones', async () => {
+    redirectUpstream();
+    const {msg} = await ask('medium.com', T.A, {do: true});
+    assert.deepEqual([...msg.answer[0].rdata], ip4('192.0.2.1'));
+    assert.equal(upstream.calls[0].query.question[0].name, 'medium.com.');
+    await ask('medium.com', T.HTTPS, {do: true});
+    assert.equal(upstream.calls.length, 2, 'HTTPS goes upstream as well');
+    assert.equal(upstream.calls[1].query.question[0].type, T.HTTPS);
+  });
+
   test('other types and other names are not redirected', async () => {
     redirectUpstream();
     await ask('medium.com', T.TXT);

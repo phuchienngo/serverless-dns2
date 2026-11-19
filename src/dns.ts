@@ -751,10 +751,13 @@ export function cnameTargets(
 export function minTtl(resp: Uint8Array): number {
   try {
     const answers = parseAnswers(resp);
+    // A CNAME chain that ends in NXDOMAIN or NODATA has the SOA of the
+    // negative answer too, which limits it (RFC 2308 5).
+    const negative = negativeTtl(resp);
     if (answers.length) {
-      return Math.min(...answers.map(a => a.ttl), MAX_TTL);
+      return Math.min(...answers.map(a => a.ttl), negative ?? MAX_TTL, MAX_TTL);
     }
-    return Math.min(negativeTtl(resp) ?? DEFAULT_TTL, MAX_TTL);
+    return Math.min(negative ?? DEFAULT_TTL, MAX_TTL);
   } catch {
     return DEFAULT_TTL; // Not a message we can read.
   }

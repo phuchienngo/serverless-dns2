@@ -549,6 +549,20 @@ describe('minTtl (RFC 2181 5.2, RFC 2308 5)', () => {
     assert.equal(minTtl(negative(100, 300)), 100);
   });
 
+  test('a CNAME chain that ends in a negative answer is limited by the SOA too (RFC 2308 5)', () => {
+    const chain = (cnameTtl: number, rcode: number) =>
+      makeResponse({
+        qname: 'a.test',
+        qtype: T.A,
+        rcode,
+        answer: [{type: T.CNAME, ttl: cnameTtl, rdata: [1, 97, 0]}],
+        authority: [{name: 'test', type: T.SOA, ttl: 900, rdata: soaRdata(60)}],
+      });
+    assert.equal(minTtl(chain(300, 3)), 60, 'NXDOMAIN after a CNAME');
+    assert.equal(minTtl(chain(300, 0)), 60, 'NODATA after a CNAME');
+    assert.equal(minTtl(chain(20, 3)), 20, 'the CNAME is shorter');
+  });
+
   test('is 30 without answers or SOA, or for garbage', () => {
     assert.equal(minTtl(makeResponse({qname: 'a.test', qtype: T.A})), 30);
     assert.equal(minTtl(new Uint8Array([1, 2, 3])), 30);

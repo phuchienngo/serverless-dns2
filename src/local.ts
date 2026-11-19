@@ -174,7 +174,11 @@ export function typeAnswer(q: Question): Result | null {
     const hinfo = makeRecord(TYPE_HINFO, TTL_LOCAL, [text.length, ...text, 0]);
     return {body: respond(q, RCODE_NOERROR, [hinfo]), ttl: TTL_LOCAL};
   }
-  if (REDIRECTS[q.name] && (q.type === TYPE_SVCB || q.type === TYPE_HTTPS)) {
+  if (
+    !q.dnssecOk &&
+    REDIRECTS[q.name] &&
+    (q.type === TYPE_SVCB || q.type === TYPE_HTTPS)
+  ) {
     // Service hints would reveal the original IPs: answer NODATA.
     return {
       body: respondNegative(q, RCODE_NOERROR, TTL_SHORT),
