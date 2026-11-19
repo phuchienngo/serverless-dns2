@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import {afterEach, beforeEach, describe, mock, test} from 'node:test';
 import {ECH_FRONT_DOMAIN} from '../src/config.js';
 import {parseQuestion} from '../src/dns.js';
+import {handle} from '../src/handlers.js';
 import {resolve} from '../src/resolve.js';
 import {
   T,
@@ -613,6 +614,73 @@ describe('client subnet (RFC 7871)', () => {
     const option = [0, 8, 0, 7, 0, 1, 24, 0, 198, 51, 100];
     const {msg} = await ask(fresh(), T.A, {}, {ecs: option});
     assert.ok(msg.opt!.options.some(o => o.code === 8));
+  });
+});
+
+describe('client subnet: a client that asks not to be located (RFC 7871 7.1.2)', () => {
+  const none = [0, 8, 0, 4, 0, 1, 0, 0]; // family 1, source prefix 0
+  const ecsOf = (call: {query: Msg}) =>
+    call.query.opt?.options.find(o => o.code === 8)?.data;
+
+  test('goes upstream as source prefix 0, whatever the connecting IP', async () => {
+    await ask(fresh(), T.A, {}, {ip: '203.0.113.77', ecs: none});
+    assert.deepEqual([...ecsOf(upstream.calls[0])!], [0, 1, 0, 0]);
+  });
+
+  test('has its own cache entry: not shared with a located client, nor with one without ECS', async () => {
+    const name = fresh();
+    await ask(name, T.A, {}, {ip: '203.0.113.1'});
+    await ask(name, T.A, {}, {ip: '203.0.113.1', ecs: none});
+    assert.equal(upstream.calls.length, 2, 'not served from the /24 entry');
+    await ask(name, T.A, {}, {ip: '198.51.100.9', ecs: none});
+    assert.equal(upstream.calls.length, 2, 'the same entry for any IP');
+    await ask(name, T.A, {}, {ecs: null});
+    assert.equal(upstream.calls.length, 3, 'not shared with "no ECS"');
+  });
+
+  test('the answer carries the upstream ECS option, scope 0', async () => {
+    useUpstream(q =>
+      makeResponse({
+        qname: q.question[0].name,
+        qtype: T.A,
+        opt: {options: [{code: 8, data: [0, 1, 0, 0]}]},
+      })
+    );
+    const {msg} = await ask(fresh(), T.A, {}, {ip: '203.0.113.5', ecs: none});
+    const option = msg.opt!.options.find(o => o.code === 8);
+    assert.deepEqual([...option!.data], [0, 1, 0, 0]);
+  });
+});
+
+describe('client subnet: what comes back for a subnet the client sent', () => {
+  test('the source prefix is the one the client sent, also when it was clamped to /24 (7.2.2)', async () => {
+    useUpstream(q => {
+      const sent = q.opt!.options.find(o => o.code === 8)!.data;
+      // An upstream that echoes the subnet it was given, with scope 24.
+      return makeResponse({
+        qname: q.question[0].name,
+        qtype: T.A,
+        opt: {
+          options: [
+            {code: 8, data: [sent[0], sent[1], sent[2], 24, ...sent.slice(4)]},
+          ],
+        },
+      });
+    });
+    const wire = makeQuery(fresh(), T.A, {
+      ecs: {family: 1, prefix: 32, address: [198, 51, 100, 9]},
+    });
+    const res = await handle(
+      new Request('https://dns.test/dns-query', {
+        method: 'POST',
+        headers: {'content-type': 'application/dns-message'},
+        body: wire as never,
+      }),
+      {env: {}, ip: null} as never
+    );
+    const msg = parseMsg(new Uint8Array(await res.arrayBuffer()));
+    const data = msg.opt!.options.find(o => o.code === 8)!.data;
+    assert.equal(data[2], 32, 'source prefix as in the query');
   });
 });
 

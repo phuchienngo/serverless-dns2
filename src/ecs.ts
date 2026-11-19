@@ -6,7 +6,7 @@ import {
   FAMILY_IPV6,
   OPTION_ECS,
 } from './constants.js';
-import {optOptions, u16} from './dns.js';
+import {addOptOption, optOptions, removeOptOption, u16} from './dns.js';
 
 /**
  * Parses an IPv4 or IPv6 address. IPv4-mapped IPv6 becomes plain IPv4.
@@ -136,6 +136,43 @@ export function clientEcs(wire: Uint8Array): number[] | null {
     return buildOption(family, padded, Math.min(source, spec.prefix));
   } catch {
     return null; // Malformed: behave as if the client sent no ECS.
+  }
+}
+
+/**
+ * Gives the ECS option of a response the source prefix and address the client
+ * sent (RFC 7871 7.2.2), as `clientEcs` shortened them. The scope is the
+ * upstream's, at most the source prefix.
+ * @param wire The client's query.
+ * @return `response` unchanged if either has no ECS option.
+ */
+export function echoClientEcs(
+  response: Uint8Array,
+  wire: Uint8Array
+): Uint8Array {
+  try {
+    const sent = optOptions(wire).find(
+      o => o.code === OPTION_ECS && o.data.length >= 4
+    );
+    const got = optOptions(response).find(
+      o => o.code === OPTION_ECS && o.data.length >= 4
+    );
+    if (!sent || !got || sent.data[2] === got.data[2]) {
+      return response;
+    }
+    const data = [
+      ...sent.data.subarray(0, 2),
+      sent.data[2],
+      Math.min(got.data[3], sent.data[2]),
+      ...sent.data.subarray(4),
+    ];
+    return addOptOption(removeOptOption(response, OPTION_ECS), [
+      ...u16(OPTION_ECS),
+      ...u16(data.length),
+      ...data,
+    ]);
+  } catch {
+    return response;
   }
 }
 

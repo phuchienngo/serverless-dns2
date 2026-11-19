@@ -7,7 +7,7 @@
 import {MAX_DNS_PARAM, MAX_QUERY} from './config.js';
 import {RECORD_TYPES, TYPE_NAPTR, TYPE_PTR} from './constants.js';
 import {makeQuestion, parseQuestion} from './dns.js';
-import {clientEcs, parseEcsParam, reverseName} from './ecs.js';
+import {clientEcs, echoClientEcs, parseEcsParam, reverseName} from './ecs.js';
 import {toJson} from './format.js';
 import {resolve, upstreamFailure} from './resolve.js';
 import type {Context, Question, ResolveOptions, Result} from './types.js';
@@ -143,6 +143,10 @@ export async function handle(
     options.ecs = ecs;
   }
   const result = await resolveOrFail(question, options);
+  if (ecs) {
+    // The response repeats the subnet as the client sent it, not as clamped.
+    result.body = echoClientEcs(result.body, wire);
+  }
   return wireResponse(result, options.timing);
 }
 
