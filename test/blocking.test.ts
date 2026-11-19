@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict';
 import {after, before, describe, test} from 'node:test';
 import {buildBlockset} from '../scripts/blocklist-lib.js';
-import {parseQuestion} from '../src/dns.js';
+import {parseQuestion} from '../src/query.js';
 import {resolve} from '../src/resolve.js';
 import {
   T,

@@ -7,12 +7,8 @@ import {isBlocked} from './blockset.js';
 import {peekBlocklist, peekRules} from './blocklist.js';
 import {BLOCK_REBINDING, CNAME_UNCLOAK} from './config.js';
 import {EDE_BLOCKED, RCODE_NXDOMAIN, TTL_BLOCKED} from './constants.js';
-import {
-  cnameTargets,
-  parseAnswers,
-  respondNegative,
-  type DnsRecord,
-} from './dns.js';
+import {cnameTargets, respondNegative} from './response.js';
+import {parseAnswers, type DnsRecord} from './wire.js';
 import {rebindingAddress} from './rebinding.js';
 import type {Question, Result} from './types.js';
 

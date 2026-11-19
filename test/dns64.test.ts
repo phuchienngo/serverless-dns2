@@ -2,7 +2,7 @@
 
 import assert from 'node:assert/strict';
 import {beforeEach, describe, test} from 'node:test';
-import {parseQuestion} from '../src/dns.js';
+import {parseQuestion} from '../src/query.js';
 import {ipv4onlyAnswer, withDns64} from '../src/dns64.js';
 import type {Question, Result} from '../src/types.js';
 import {

@@ -2,7 +2,7 @@
 
 import assert from 'node:assert/strict';
 import {describe, test} from 'node:test';
-import {parseAnswers} from '../src/dns.js';
+import {parseAnswers} from '../src/wire.js';
 import {
   addSvcParam,
   alpnValue,

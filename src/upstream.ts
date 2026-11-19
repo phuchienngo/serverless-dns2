@@ -12,17 +12,16 @@ import {
   UPSTREAM_TIMEOUT_MS,
 } from './config.js';
 import {TYPE_A, TYPE_AAAA} from './constants.js';
+import {buildQuery} from './query.js';
 import {
-  buildQuery,
   encodeName,
   HEADER_BYTES,
-  minTtl,
   parseAnswers,
   QUESTION_POINTER,
   rcodeOf,
-  respond,
   u16,
-} from './dns.js';
+} from './wire.js';
+import {minTtl, respond} from './response.js';
 import type {Env, Question, Result} from './types.js';
 
 /**

@@ -13,7 +13,7 @@ import {
   STALE_TTL,
 } from '../src/config.js';
 import {lookupLocal, lookupShared, store} from '../src/cache.js';
-import {parseQuestion} from '../src/dns.js';
+import {parseQuestion} from '../src/query.js';
 import {
   T,
   ip4,

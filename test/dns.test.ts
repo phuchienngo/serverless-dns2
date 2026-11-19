@@ -1,4 +1,5 @@
 /**
+ * The DNS message code (wire.ts, query.ts, response.ts).
  * RFC 1035 (messages), RFC 2308 (negative answers), RFC 6891 (EDNS0),
  * RFC 3225/4035 (DO), RFC 7830/8467 (padding), RFC 8914 (EDE).
  */
@@ -9,30 +10,30 @@ import {alpnValue, svcbRdata} from '../src/svcb.js';
 import {EDE_BLOCKED} from '../src/constants.js';
 import {
   addOptOption,
-  buildQuery,
   cnameTargets,
   copyRd,
   edeOption,
-  encodeName,
-  lowerAscii,
   minTtl,
   padResponse,
-  makeQuestion,
+  makeRecord,
+  removeOptOption,
+  respond,
+  respondNegative,
+  stripOpt,
+} from '../src/response.js';
+import {buildQuery, makeQuestion, parseQuestion} from '../src/query.js';
+import {
+  encodeName,
+  lowerAscii,
   optOptions,
   rcodeOf,
-  makeRecord,
   parseAdditional,
   readRecords,
   parseAnswers,
-  removeOptOption,
   parseAuthority,
-  parseQuestion,
   readName,
-  respond,
-  respondNegative,
   skipName,
-  stripOpt,
-} from '../src/dns.js';
+} from '../src/wire.js';
 import {
   T,
   ip4,

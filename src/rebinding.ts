@@ -12,7 +12,7 @@ import {
   TYPE_HTTPS,
   TYPE_SVCB,
 } from './constants.js';
-import {parseAnswers, type DnsRecord} from './dns.js';
+import {parseAnswers, type DnsRecord} from './wire.js';
 import {inBlocks, type Ipv4Block} from './ipv4.js';
 import {svcParams} from './svcb.js';
 

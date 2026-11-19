@@ -6,7 +6,7 @@
 
 import {MAX_DNS_PARAM, MAX_QUERY} from './config.js';
 import {RECORD_TYPES, TYPE_NAPTR, TYPE_PTR} from './constants.js';
-import {makeQuestion, parseQuestion} from './dns.js';
+import {makeQuestion, parseQuestion} from './query.js';
 import {clientEcs, parseEcsParam, reverseName} from './ecs.js';
 import {toJson} from './format.js';
 import {resolve, upstreamFailure} from './resolve.js';

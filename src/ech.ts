@@ -17,15 +17,9 @@ import {
   TYPE_A,
   TYPE_HTTPS,
 } from './constants.js';
-import {
-  buildQuery,
-  encodeName,
-  parseAnswers,
-  rcodeOf,
-  u16,
-  makeRecord,
-  respond,
-} from './dns.js';
+import {buildQuery} from './query.js';
+import {encodeName, parseAnswers, rcodeOf, u16} from './wire.js';
+import {makeRecord, respond} from './response.js';
 import {inBlocks, type Ipv4Block} from './ipv4.js';
 import {Loaded} from './loaded.js';
 import {

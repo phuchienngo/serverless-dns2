@@ -6,7 +6,7 @@
  */
 
 import {OPTION_COOKIE} from './constants.js';
-import {ednsOption} from './dns.js';
+import {ednsOption} from './response.js';
 import type {Question} from './types.js';
 
 const encoder = new TextEncoder();

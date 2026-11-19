@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import {describe, test} from 'node:test';
 import {EDE_PRODUCED} from '../src/constants.js';
-import {parseQuestion} from '../src/dns.js';
+import {parseQuestion} from '../src/query.js';
 import {ddrAnswer, isDdr, localAnswer, typeAnswer} from '../src/local.js';
 import {T, makeQuery, parseMsg} from './helpers.js';
 

@@ -6,13 +6,8 @@ import {
   FAMILY_IPV6,
   OPTION_ECS,
 } from './constants.js';
-import {
-  addOptOption,
-  ednsOption,
-  removeOptOption,
-  optOptions,
-  u16,
-} from './dns.js';
+import {addOptOption, ednsOption, removeOptOption} from './response.js';
+import {optOptions, u16} from './wire.js';
 
 /**
  * Parses an IPv4 or IPv6 address. IPv4-mapped IPv6 becomes plain IPv4.

@@ -14,15 +14,9 @@ import {
   TYPE_CNAME,
   TYPE_PTR,
 } from './constants.js';
-import {
-  makeQuestion,
-  makeRecord,
-  encodeName,
-  parseAnswers,
-  readName,
-  rcodeOf,
-  respond,
-} from './dns.js';
+import {makeQuestion} from './query.js';
+import {makeRecord, respond} from './response.js';
+import {encodeName, parseAnswers, readName, rcodeOf} from './wire.js';
 import {inBlocks, type Ipv4Block} from './ipv4.js';
 import type {Question, Result} from './types.js';
 

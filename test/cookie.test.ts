@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import {describe, mock, test} from 'node:test';
 import {cookieOption} from '../src/cookie.js';
-import {parseQuestion} from '../src/dns.js';
+import {parseQuestion} from '../src/query.js';
 import {T, makeQuery} from './helpers.js';
 
 const client = [1, 2, 3, 4, 5, 6, 7, 8];

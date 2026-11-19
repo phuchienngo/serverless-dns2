@@ -3,7 +3,7 @@
  * reading and extending the SvcParams of a record in a message.
  */
 
-import {readName, encodeName, u16, type DnsRecord} from './dns.js';
+import {readName, encodeName, u16, type DnsRecord} from './wire.js';
 
 const encoder = new TextEncoder();
 

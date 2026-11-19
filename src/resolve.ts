@@ -26,11 +26,9 @@ import {
   removeOptOption,
   respond,
   stripOpt,
-  encodeName,
-  parseAnswers,
-  rcodeOf,
-  makeQuestion,
-} from './dns.js';
+} from './response.js';
+import {encodeName, parseAnswers, rcodeOf} from './wire.js';
+import {makeQuestion} from './query.js';
 import {cookieOption} from './cookie.js';
 import {withDns64} from './dns64.js';
 import {getCloudflareRanges} from './cloudflare-ips.js';

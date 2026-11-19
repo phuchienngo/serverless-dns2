@@ -12,7 +12,7 @@ import {
   STALE_TTL,
 } from './config.js';
 import {TYPE_OPT} from './constants.js';
-import {HEADER_BYTES, rcodeOf, readRecords, u16} from './dns.js';
+import {HEADER_BYTES, rcodeOf, readRecords, u16} from './wire.js';
 import type {Question, Result} from './types.js';
 
 /** A cached response. `storedAt` is in milliseconds, `ttl` in seconds. */

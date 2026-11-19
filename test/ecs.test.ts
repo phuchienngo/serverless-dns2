@@ -2,7 +2,7 @@
 
 import assert from 'node:assert/strict';
 import {describe, test} from 'node:test';
-import {parseQuestion} from '../src/dns.js';
+import {parseQuestion} from '../src/query.js';
 import {clientEcs, makeEcs, parseEcsParam, reverseName} from '../src/ecs.js';
 import {T, ip4, makeQuery} from './helpers.js';
 

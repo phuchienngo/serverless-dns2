@@ -2,7 +2,7 @@
 
 import assert from 'node:assert/strict';
 import {describe, test} from 'node:test';
-import {parseQuestion} from '../src/dns.js';
+import {parseQuestion} from '../src/query.js';
 import {queryFlags} from '../src/upstream.js';
 import {T, makeQuery} from './helpers.js';
 

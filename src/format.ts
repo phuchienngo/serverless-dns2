@@ -4,7 +4,7 @@
  */
 
 import {TYPE_OPT} from './constants.js';
-import {latin1, readName} from './dns.js';
+import {latin1, readName} from './wire.js';
 
 const decoder = new TextDecoder();
 

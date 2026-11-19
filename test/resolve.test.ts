@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 import {afterEach, beforeEach, describe, mock, test} from 'node:test';
 import {ECH_FRONT_DOMAIN} from '../src/config.js';
-import {parseQuestion} from '../src/dns.js';
+import {parseQuestion} from '../src/query.js';
 import {handle} from '../src/handlers.js';
 import {resolve} from '../src/resolve.js';
 import {
