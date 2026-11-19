@@ -3,7 +3,9 @@
  * into the isolate's memory on first use.
  */
 
+import {fetchAsset} from './assets.js';
 import {BLOCKLIST_PATH, RULES_PATH} from './config.js';
+import {RETRY_DELAY_MS} from './loaded.js';
 import {compilePatterns} from './regexlist.js';
 import {decodeBlockset, type BlockSet} from './blockset.js';
 import type {Env} from './types.js';
@@ -13,8 +15,6 @@ export interface Rules {
   block: RegExp | null;
   allow: RegExp | null;
 }
-
-const RETRY_DELAY_MS = 60 * 1000;
 
 let hashes: BlockSet | null = null;
 let rules: Rules = {block: null, allow: null};
@@ -28,10 +28,7 @@ let lastLoad = {asset: 0, body: 0, decode: 0};
 /** Loads the regex rules; null if they could not be loaded. */
 async function fetchRules(env: Env, host: string): Promise<Rules | null> {
   try {
-    const response = await env.ASSETS!.fetch(`https://${host}${RULES_PATH}`);
-    if (!response.ok) {
-      throw new Error(`rules ${response.status}`);
-    }
+    const response = await fetchAsset(env, host, RULES_PATH);
     const {block, allow} = (await response.json()) as {
       block?: string[];
       allow?: string[];
@@ -49,13 +46,8 @@ async function fetchRules(env: Env, host: string): Promise<Rules | null> {
 async function fetchBlockset(env: Env, host: string): Promise<BlockSet | null> {
   try {
     const t0 = performance.now();
-    const response = await env.ASSETS!.fetch(
-      `https://${host}${BLOCKLIST_PATH}`
-    );
+    const response = await fetchAsset(env, host, BLOCKLIST_PATH);
     const t1 = performance.now();
-    if (!response.ok) {
-      throw new Error(`blocklist ${response.status}`);
-    }
     const buffer = await response.arrayBuffer();
     const t2 = performance.now();
     const set = decodeBlockset(buffer);

@@ -12,8 +12,9 @@ import {
   TYPE_HTTPS,
   TYPE_SVCB,
 } from './constants.js';
-import {parseAnswers, skipName, type DnsRecord} from './dns.js';
+import {parseAnswers, type DnsRecord} from './dns.js';
 import {inBlocks, type Ipv4Block} from './ipv4.js';
+import {svcParams} from './svcb.js';
 
 /**
  * IPv4 blocks that rebinding uses, as [address, prefix length]: this network,
@@ -67,31 +68,17 @@ export function isPrivateV6(a: ArrayLike<number>): boolean {
 /** The addresses in the SvcParams `ipv4hint` and `ipv6hint` of a record. */
 function hintedAddresses(
   msg: Uint8Array,
-  rdata: number,
-  end: number
+  record: DnsRecord
 ): Array<{v4: boolean; bytes: Uint8Array}> {
-  const view = new DataView(msg.buffer, msg.byteOffset, msg.byteLength);
-  const found: Array<{v4: boolean; bytes: Uint8Array}> = [];
-  let at = skipName(msg, rdata + 2); // After the priority and the target.
-  while (at + 4 <= end) {
-    const key = view.getUint16(at);
-    const length = view.getUint16(at + 2);
-    const value = at + 4;
-    at = value + length;
+  return svcParams(msg, record).flatMap(({key, value}) => {
     const size =
       key === SVCPARAM_IPV4HINT ? 4 : key === SVCPARAM_IPV6HINT ? 16 : 0;
-    for (
-      let i = 0;
-      size && i + size <= length && value + i + size <= end;
-      i += size
-    ) {
-      found.push({
-        v4: size === 4,
-        bytes: msg.subarray(value + i, value + i + size),
-      });
+    const found = [];
+    for (let i = 0; size && i + size <= value.length; i += size) {
+      found.push({v4: size === 4, bytes: value.subarray(i, i + size)});
     }
-  }
-  return found;
+    return found;
+  });
 }
 
 /**
@@ -118,7 +105,7 @@ export function rebindingAddress(
           return [...a];
         }
       } else if (r.type === TYPE_HTTPS || r.type === TYPE_SVCB) {
-        for (const {v4, bytes} of hintedAddresses(msg, r.data, r.end)) {
+        for (const {v4, bytes} of hintedAddresses(msg, r)) {
           if (v4 ? isPrivateV4(bytes) : isPrivateV6(bytes)) {
             return [...bytes];
           }

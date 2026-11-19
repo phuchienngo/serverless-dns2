@@ -5,6 +5,7 @@
 
 import assert from 'node:assert/strict';
 import {describe, test} from 'node:test';
+import {alpnValue, svcbRdata} from '../src/svcb.js';
 import {EDE_BLOCKED} from '../src/constants.js';
 import {
   addOptOption,
@@ -16,11 +17,9 @@ import {
   lowerAscii,
   minTtl,
   padResponse,
-  alpnValue,
   makeQuestion,
   optOptions,
   rcodeOf,
-  svcbRdata,
   makeRecord,
   parseAdditional,
   readRecords,

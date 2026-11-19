@@ -30,13 +30,8 @@ import {
   TYPE_RESINFO,
   TYPE_SVCB,
 } from './constants.js';
-import {
-  alpnValue,
-  makeRecord,
-  respond,
-  respondNegative,
-  svcbRdata,
-} from './dns.js';
+import {makeRecord, respond, respondNegative} from './dns.js';
+import {alpnValue, svcbRdata} from './svcb.js';
 import type {Question, Result} from './types.js';
 import {isUndelegated} from './undelegated.js';
 

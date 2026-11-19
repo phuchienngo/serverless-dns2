@@ -1,8 +1,10 @@
 /**
  * @fileoverview Best-effort Encrypted Client Hello. Cloudflare-hosted sites
  * share one ECH key, but many resolvers do not return it. For an HTTPS query
- * that came back empty, we check whether the name's IPv4 addresses belong to
- * Cloudflare and, if so, answer with an HTTPS record carrying that key.
+ * whose answer has no `ech`, we check whether the name is on Cloudflare (its
+ * IPv4 hints, or else its A records, are in Cloudflare's ranges) and, if so,
+ * add the key to the record the upstream sent, or answer with a new record
+ * when there was none.
  */
 
 import {ECH_FRONT_DOMAIN} from './config.js';
@@ -16,19 +18,23 @@ import {
   TYPE_HTTPS,
 } from './constants.js';
 import {
-  alpnValue,
   buildQuery,
-  type DnsRecord,
   encodeName,
-  makeRecord,
-  rcodeOf,
   parseAnswers,
-  readName,
-  respond,
-  svcbRdata,
+  rcodeOf,
   u16,
+  makeRecord,
+  respond,
 } from './dns.js';
 import {inBlocks, type Ipv4Block} from './ipv4.js';
+import {Loaded} from './loaded.js';
+import {
+  addSvcParam,
+  alpnValue,
+  isAliasMode,
+  svcParam,
+  svcbRdata,
+} from './svcb.js';
 import type {Question, Result} from './types.js';
 
 const ECH_CONFIG_TTL_MS = 3600 * 1000;
@@ -40,60 +46,23 @@ export type Ask = (wire: Uint8Array) => Promise<Uint8Array>;
 /** Cloudflare's IPv4 ranges; null if they cannot be had. */
 export type Ranges = () => Promise<Ipv4Block[] | null>;
 
-/**
- * @return The value of SvcParam `key` of an HTTPS record's RDATA, or null.
- */
-function svcParam(resp: Uint8Array, rdata: number, end: number, key: number) {
-  let offset = readName(resp, rdata + 2).next; // Skip priority and target.
-  while (offset + 4 <= end) {
-    const k = (resp[offset] << 8) | resp[offset + 1];
-    const length = (resp[offset + 2] << 8) | resp[offset + 3];
-    if (k === key) {
-      return resp.slice(offset + 4, offset + 4 + length);
+/** The shared Cloudflare ECHConfigList, asked for at most once an hour. */
+const echConfig = new Loaded(async (ask: Ask) => {
+  const question = [...encodeName(ECH_FRONT_DOMAIN), ...u16(TYPE_HTTPS), 0, 1];
+  const resp = await ask(buildQuery(question, null));
+  for (const record of parseAnswers(resp)) {
+    const value =
+      record.type === TYPE_HTTPS && svcParam(resp, record, SVCPARAM_ECH);
+    if (value) {
+      return value.slice();
     }
-    offset += 4 + length;
   }
   return null;
-}
-
-let echConfig: {value: Uint8Array; expires: number} | null = null;
-let echConfigLoading: Promise<Uint8Array | null> | null = null;
+}, ECH_CONFIG_TTL_MS);
 
 /** Forgets the memoized ECH key (for tests). */
 export function resetEch(): void {
-  echConfig = null;
-  echConfigLoading = null;
-}
-
-async function loadEchConfig(ask: Ask): Promise<Uint8Array | null> {
-  const question = [...encodeName(ECH_FRONT_DOMAIN), ...u16(TYPE_HTTPS), 0, 1];
-  const resp = await ask(buildQuery(question, null));
-  for (const a of parseAnswers(resp)) {
-    if (a.type !== TYPE_HTTPS) {
-      continue;
-    }
-    const rdata = a.data;
-    const value = svcParam(resp, rdata, rdata + a.length, SVCPARAM_ECH);
-    if (value) {
-      echConfig = {value, expires: Date.now() + ECH_CONFIG_TTL_MS};
-      return value;
-    }
-  }
-  return null;
-}
-
-/**
- * @return The shared Cloudflare ECHConfigList (memoized for an hour; queries
- *     that need it at the same time share one request).
- */
-function getEchConfig(ask: Ask): Promise<Uint8Array | null> {
-  if (echConfig && echConfig.expires > Date.now()) {
-    return Promise.resolve(echConfig.value);
-  }
-  echConfigLoading ??= loadEchConfig(ask).finally(() => {
-    echConfigLoading = null;
-  });
-  return echConfigLoading;
+  echConfig.reset();
 }
 
 /** @return Whether any of the name's A records is a Cloudflare address. */
@@ -147,42 +116,36 @@ export function startEchProbe(
   const loaded = ranges().catch(() => null);
   return {
     cloudflare: behindCloudflare(q.name, ecs, ask, loaded).catch(() => false),
-    config: getEchConfig(ask).catch(() => null),
+    config: echConfig.get(ask),
     ranges: loaded,
   };
 }
 
 /**
- * @return A copy of `body` where the HTTPS record `a` also has the `ech`
- *     parameter, placed among the others in increasing key order (RFC 9460
- *     2.2). Everything else in the message is kept.
+ * @return Whether the answer's IPv4 hints are in Cloudflare's ranges; null if
+ *     it has none.
  */
-function insertEch(
+function hintedCloudflare(
   body: Uint8Array,
-  a: DnsRecord,
-  config: Uint8Array
-): Uint8Array {
-  const end = a.data + a.length;
-  let at = readName(body, a.data + 2).next; // After priority and target.
-  while (at + 4 <= end && ((body[at] << 8) | body[at + 1]) < SVCPARAM_ECH) {
-    at += 4 + ((body[at + 2] << 8) | body[at + 3]);
+  records: ReturnType<typeof parseAnswers>,
+  blocks: Ipv4Block[]
+): boolean | null {
+  let hinted: boolean | null = null;
+  for (const record of records) {
+    const hints = svcParam(body, record, SVCPARAM_IPV4HINT);
+    for (let i = 0; hints && i + 4 <= hints.length; i += 4) {
+      hinted = (hinted ?? false) || inBlocks(hints.subarray(i, i + 4), blocks);
+    }
   }
-  const param = [...u16(SVCPARAM_ECH), ...u16(config.length), ...config];
-  const length = a.length + param.length;
-  const out = new Uint8Array(body.length + param.length);
-  out.set(body.subarray(0, a.data - 2));
-  out.set(u16(length), a.data - 2);
-  out.set(body.subarray(a.data, at), a.data);
-  out.set(param, at);
-  out.set(body.subarray(at), at + param.length);
-  return out;
+  return hinted;
 }
 
 /**
- * Adds ECH to the HTTPS answer when `result` has none and the
- * name is served by Cloudflare: to the records the upstream sent, or, when it
- * sent no HTTPS record, as a new one. The IPv4 hints of the answer, if it has any,
- * tell whether the name is on Cloudflare; otherwise the probe's A query does.
+ * Adds ECH to the HTTPS answer when `result` has none and the name is served
+ * by Cloudflare: to the records the upstream sent (AliasMode ones have no
+ * parameters to add it to), or, when it sent no HTTPS record, as a new one.
+ * The IPv4 hints of the answer, if it has any, tell whether the name is on
+ * Cloudflare; otherwise the probe's A query does.
  * Returns `result` unchanged otherwise, or if anything fails.
  */
 export async function addEch(
@@ -198,50 +161,34 @@ export async function addEch(
     if (!blocks) {
       return result;
     }
-    let hinted: boolean | null = null;
-    const records = parseAnswers(result.body).filter(
-      a => a.type === TYPE_HTTPS
-    );
-    for (const a of records) {
-      const end = a.data + a.length;
-      if (svcParam(result.body, a.data, end, SVCPARAM_ECH)) {
-        return result; // Already has ECH.
-      }
-      const hints = svcParam(result.body, a.data, end, SVCPARAM_IPV4HINT);
-      for (let i = 0; hints && i + 4 <= hints.length; i += 4) {
-        hinted =
-          (hinted ?? false) || inBlocks(hints.subarray(i, i + 4), blocks);
-      }
+    const {body} = result;
+    const records = parseAnswers(body).filter(r => r.type === TYPE_HTTPS);
+    if (records.some(r => svcParam(body, r, SVCPARAM_ECH))) {
+      return result; // Already has ECH.
     }
-    // AliasMode records (priority 0) have no parameters to add ECH to.
-    const services = records.filter(
-      a => ((result.body[a.data] << 8) | result.body[a.data + 1]) !== 0
-    );
+    const services = records.filter(r => !isAliasMode(body, r));
     if (records.length && !services.length) {
       return result;
     }
-    if (!(hinted ?? (await probe.cloudflare))) {
-      return result;
-    }
-    const config = await probe.config;
+    const onCloudflare =
+      hintedCloudflare(body, records, blocks) ?? (await probe.cloudflare);
+    const config = onCloudflare ? await probe.config : null;
     if (!config) {
       return result;
     }
-    if (services.length) {
-      // Keep the record the upstream sent (hints, ports, its own alpn) and
-      // add the key. From the last record to the first, so offsets hold.
-      let body = result.body;
-      for (const a of [...services].reverse()) {
-        body = insertEch(body, a, config);
-      }
-      return {body, ttl: result.ttl};
+    if (!services.length) {
+      const rdata = svcbRdata(1, '.', [
+        [SVCPARAM_ALPN, alpnValue(ALPN_HTTP)],
+        [SVCPARAM_ECH, [...config]],
+      ]);
+      const record = makeRecord(TYPE_HTTPS, SYNTHETIC_TTL, rdata);
+      return {body: respond(q, RCODE_NOERROR, [record]), ttl: SYNTHETIC_TTL};
     }
-    const rdata = svcbRdata(1, '.', [
-      [SVCPARAM_ALPN, alpnValue(ALPN_HTTP)],
-      [SVCPARAM_ECH, [...config]],
-    ]);
-    const record = makeRecord(TYPE_HTTPS, SYNTHETIC_TTL, rdata);
-    return {body: respond(q, RCODE_NOERROR, [record]), ttl: SYNTHETIC_TTL};
+    // From the last record to the first, so that the offsets still hold.
+    const changed = [...services]
+      .reverse()
+      .reduce((msg, r) => addSvcParam(msg, r, SVCPARAM_ECH, config), body);
+    return {body: changed, ttl: result.ttl};
   } catch {
     return result; // ECH is best effort: keep the answer as it is.
   }

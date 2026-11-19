@@ -386,34 +386,6 @@ export function rcodeOf(resp: Uint8Array): number {
 }
 
 /**
- * @param protocols ALPN ids, such as `h2`.
- * @return The value of an `alpn` SvcParam: each id preceded by its length.
- */
-export function alpnValue(protocols: string[]): number[] {
-  return protocols.flatMap(p => [p.length, ...encoder.encode(p)]);
-}
-
-/**
- * Builds the RDATA of an SVCB or HTTPS record in service mode (RFC 9460).
- * @param target Target name; `.` means the owner name itself.
- * @param params SvcParams as [key, value]; written in increasing key order,
- *     as the RFC requires.
- */
-export function svcbRdata(
-  priority: number,
-  target: string,
-  params: Array<[number, number[]]>
-): number[] {
-  return [
-    ...u16(priority),
-    ...encodeName(target),
-    ...[...params]
-      .sort(([a], [b]) => a - b)
-      .flatMap(([key, value]) => [...u16(key), ...u16(value.length), ...value]),
-  ];
-}
-
-/**
  * Makes the question of a query that did not arrive as a DNS message (the
  * JSON API): recursion desired, no EDNS.
  * @param flags DNSSEC flags to ask the upstream with (DO and CD).
