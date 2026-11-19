@@ -169,6 +169,33 @@ describe('/dns-query (RFC 8484)', () => {
   });
 });
 
+describe('a client that asks not to be located (ECS source prefix 0)', () => {
+  const located = {env: {}, ip: '203.0.113.77'} as never;
+  const send = (ecs?: {family: 1 | 2; prefix: number; address: number[]}) =>
+    handle(
+      new Request(`${B}/dns-query`, {
+        method: 'POST',
+        headers: {'content-type': 'application/dns-message'},
+        body: makeQuery(fresh(), T.A, {ecs}) as never,
+      }),
+      located
+    );
+  const subnetSent = () => [
+    ...(upstream.calls.at(-1)!.query.opt?.options.find(o => o.code === 8)
+      ?.data ?? []),
+  ];
+
+  test('no subnet of the connecting IP goes upstream: source prefix 0 does', async () => {
+    await send({family: 2, prefix: 0, address: []});
+    assert.deepEqual(subnetSent(), [0, 2, 0, 0]);
+  });
+
+  test('a query with no ECS still gets its connecting IP as /24', async () => {
+    await send();
+    assert.deepEqual(subnetSent(), [0, 1, 24, 0, 203, 0, 113]);
+  });
+});
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
 describe('/resolve (Google JSON API)', () => {
   const json = async (path: string) => {

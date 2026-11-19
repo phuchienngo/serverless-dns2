@@ -744,6 +744,48 @@ describe('best-effort ECH for Cloudflare-hosted names', () => {
     assert.ok(Buffer.from(record.rdata).includes(Buffer.from(ECH_CONFIG)));
   });
 
+  test('adds ech to the upstream record and keeps the rest, in key order', async () => {
+    const v6 = Array.from({length: 16}, (_, i) => i);
+    // alpn = "h3","h2"; ipv4hint = 104.16.0.5; ipv6hint = v6.
+    const alpn = [2, 0x68, 0x33, 2, 0x68, 0x32];
+    const rdata = [
+      ...[0, 1, 0],
+      ...[0, 1, 0, alpn.length, ...alpn],
+      ...[0, 4, 0, 4, 104, 16, 0, 5],
+      ...[0, 6, 0, 16, ...v6],
+    ];
+    cloudflareUpstream({'cf-full.example.com.': rdata});
+    const {msg} = await ask('cf-full.example.com', T.HTTPS, {}, withRanges());
+    assert.equal(msg.answer.length, 1);
+    const out = msg.answer[0].rdata;
+    assert.deepEqual(paramKeys(out), [1, 4, 5, 6]);
+    assert.equal(msg.answer[0].ttl, 300, 'the upstream TTL is kept');
+    const bytes = Buffer.from(out);
+    assert.ok(bytes.includes(Buffer.from(alpn)), 'alpn kept');
+    assert.ok(bytes.includes(Buffer.from([104, 16, 0, 5])), 'ipv4hint kept');
+    assert.ok(bytes.includes(Buffer.from(v6)), 'ipv6hint kept');
+    assert.ok(bytes.includes(Buffer.from(ECH_CONFIG)), 'ech added');
+  });
+
+  test('a record with only alpn gets ech after it', async () => {
+    cloudflareUpstream({
+      'cf-alpn.example.com.': [0, 1, 0, 0, 1, 0, 3, 2, 0x68, 0x32],
+    });
+    const {msg} = await ask('cf-alpn.example.com', T.HTTPS, {}, withRanges());
+    assert.deepEqual(paramKeys(msg.answer[0].rdata), [1, 5]);
+  });
+
+  test('an AliasMode record is left alone', async () => {
+    const alias = [0, 0, 3, 0x61, 0x6c, 0x74, 0]; // priority 0, target "alt"
+    cloudflareUpstream({'cf-alias.example.com.': alias});
+    const {msg} = await ask('cf-alias.example.com', T.HTTPS, {}, withRanges());
+    assert.equal(msg.answer.length, 1);
+    assert.equal(msg.answer[0].rdata[1], 0);
+    assert.ok(
+      !Buffer.from(msg.answer[0].rdata).includes(Buffer.from(ECH_CONFIG))
+    );
+  });
+
   test('leaves a name that is not on Cloudflare alone', async () => {
     cloudflareUpstream();
     const {msg} = await ask(

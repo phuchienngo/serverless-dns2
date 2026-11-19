@@ -100,8 +100,11 @@ export function parseEcsParam(param: string): number[] | null {
  * Reads the client's own ECS option from a DNS query (as sent by dnsproxy or
  * AdGuard Home with `edns-addr`). The subnet is clamped to /24 (IPv4) or /48
  * (IPv6) to keep the cache effective and the client's privacy.
- * @return The option bytes; null if there is none, or it is empty (a privacy
- *     signal such as Firefox's `::/0`, meaning "do not locate me").
+ * @return The option bytes; null if there is none or it is malformed (the
+ *     connecting IP is used then). An empty one (source prefix 0 or an
+ *     all-zero address: a privacy signal such as Firefox's `::/0`, "do not
+ *     locate me") gives a source-prefix-0 option, which is sent upstream as it
+ *     is so that no subnet is used (RFC 7871 7.1.2), and comes back with scope 0.
  */
 export function clientEcs(wire: Uint8Array): number[] | null {
   try {
@@ -116,14 +119,15 @@ export function clientEcs(wire: Uint8Array): number[] | null {
     const source = data[2];
     const address = Array.from(data.subarray(4));
     const spec = ECS_FAMILIES[family];
-    const empty = source === 0 || address.every(b => b === 0);
     if (
       !spec ||
       source > spec.bits ||
-      address.length !== Math.ceil(source / 8) ||
-      empty
+      address.length !== Math.ceil(source / 8)
     ) {
       return null;
+    }
+    if (source === 0 || address.every(b => b === 0)) {
+      return buildOption(family, [], 0);
     }
     const padded = [
       ...address,

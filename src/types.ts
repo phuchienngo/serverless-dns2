@@ -57,7 +57,10 @@ export interface Context {
 
 export interface ResolveOptions extends Context {
   host: string;
-  /** Overrides the subnet derived from `ip`; null sends none. */
+  /**
+   * Overrides the subnet derived from `ip`; null sends none. An option with
+   * source prefix 0 is the client asking not to be located.
+   */
   ecs?: number[] | null;
   /** Synthesize AAAA records from A records (DNS64, RFC 6147). */
   dns64?: boolean;

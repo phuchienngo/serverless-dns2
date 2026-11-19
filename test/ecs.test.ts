@@ -127,11 +127,14 @@ describe('clientEcs (an ECS option sent by the client)', () => {
     );
   });
 
-  test('ignores an empty subnet (source prefix 0 or an all-zero address)', () => {
-    assert.equal(read({ecs: {family: 2, prefix: 0, address: []}}), null);
-    assert.equal(
+  test('an empty subnet (source prefix 0 or an all-zero address) asks not to be located: a source prefix 0 option', () => {
+    assert.deepEqual(
+      read({ecs: {family: 2, prefix: 0, address: []}}),
+      option(2, 0, [])
+    );
+    assert.deepEqual(
       read({ecs: {family: 1, prefix: 24, address: [0, 0, 0]}}),
-      null
+      option(1, 0, [])
     );
   });
 

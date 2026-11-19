@@ -18,7 +18,7 @@ then set `dns_ddr_version 1` and `networkmonitor_async_privdns_resolution 1` via
 
 ## Extras
 
-- Honours a client-supplied ECS (dnsproxy / AdGuard Home `edns-addr`); empty subnets such as `::/0` are ignored.
+- Honours a client-supplied ECS (dnsproxy / AdGuard Home `edns-addr`); an empty one (source prefix 0, such as Firefox's `::/0`) means "do not locate me": it is sent upstream as it is, so no subnet of the connecting IP is used (RFC 7871 7.1.2).
 - `ANY` queries get a minimal HINFO locally (`BLOCK_ANY`); `REDIRECTS` in `src/config.ts` answers a name with another name's A/AAAA records (now `medium.com` -> `voz.vn`).
 - `/resolve?name=8.8.8.8&type=PTR` converts an IP to its reverse name.
 - The DO and CD bits of a query are passed to the upstream (DNSSEC records and `AD` come back as asked; a query with AD but no DO also gets `AD`). Answers made
@@ -27,7 +27,7 @@ then set `dns_ddr_version 1` and `networkmonitor_async_privdns_resolution 1` via
 - Padding (RFC 8467): a query with an EDNS Padding option gets its response padded to a multiple of 468 bytes. Stale
   answers carry EDE 3 (RFC 8767). `localhost` and `*.localhost` answer 127.0.0.1 / ::1 (RFC 6761), `ANY` gets a minimal
   HINFO (RFC 8482), non-QUERY opcodes get NOTIMP and EDNS versions above 0 get BADVERS. RD and the opcode are echoed.
-- Best-effort ECH: for Cloudflare-hosted names the HTTPS answer gets Cloudflare's shared `ech` key (`src/ech.ts`); the Cloudflare IPv4 ranges it uses to recognise those names are downloaded from https://www.cloudflare.com/ips-v4 by `npm run build-lists` (the build fails if that fails), so the daily rebuild keeps them current. Not done for queries with DO, as the replaced record would carry no signature.
+- Best-effort ECH: for Cloudflare-hosted names the HTTPS answer gets Cloudflare's shared `ech` key (`src/ech.ts`), added to the record the upstream sent (hints and the rest stay) or, if it sent none, as a new one; the Cloudflare IPv4 ranges it uses to recognise those names are downloaded from https://www.cloudflare.com/ips-v4 by `npm run build-lists` (the build fails if that fails), so the daily rebuild keeps them current. Not done for queries with DO, as the changed record would carry no signature.
 
 ## Standards extras
 

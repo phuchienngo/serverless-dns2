@@ -18,6 +18,7 @@ import {
 import {
   alpnValue,
   buildQuery,
+  type DnsRecord,
   encodeName,
   makeRecord,
   rcodeOf,
@@ -152,8 +153,35 @@ export function startEchProbe(
 }
 
 /**
- * Adds ECH the HTTPS answer with one carrying ECH when `result` has none and the
- * name is served by Cloudflare. The IPv4 hints of the answer, if it has any,
+ * @return A copy of `body` where the HTTPS record `a` also has the `ech`
+ *     parameter, placed among the others in increasing key order (RFC 9460
+ *     2.2). Everything else in the message is kept.
+ */
+function insertEch(
+  body: Uint8Array,
+  a: DnsRecord,
+  config: Uint8Array
+): Uint8Array {
+  const end = a.data + a.length;
+  let at = readName(body, a.data + 2).next; // After priority and target.
+  while (at + 4 <= end && ((body[at] << 8) | body[at + 1]) < SVCPARAM_ECH) {
+    at += 4 + ((body[at + 2] << 8) | body[at + 3]);
+  }
+  const param = [...u16(SVCPARAM_ECH), ...u16(config.length), ...config];
+  const length = a.length + param.length;
+  const out = new Uint8Array(body.length + param.length);
+  out.set(body.subarray(0, a.data - 2));
+  out.set(u16(length), a.data - 2);
+  out.set(body.subarray(a.data, at), a.data);
+  out.set(param, at);
+  out.set(body.subarray(at), at + param.length);
+  return out;
+}
+
+/**
+ * Adds ECH to the HTTPS answer when `result` has none and the
+ * name is served by Cloudflare: to the records the upstream sent, or, when it
+ * sent no HTTPS record, as a new one. The IPv4 hints of the answer, if it has any,
  * tell whether the name is on Cloudflare; otherwise the probe's A query does.
  * Returns `result` unchanged otherwise, or if anything fails.
  */
@@ -185,12 +213,28 @@ export async function addEch(
           (hinted ?? false) || inBlocks(hints.subarray(i, i + 4), blocks);
       }
     }
+    // AliasMode records (priority 0) have no parameters to add ECH to.
+    const services = records.filter(
+      a => ((result.body[a.data] << 8) | result.body[a.data + 1]) !== 0
+    );
+    if (records.length && !services.length) {
+      return result;
+    }
     if (!(hinted ?? (await probe.cloudflare))) {
       return result;
     }
     const config = await probe.config;
     if (!config) {
       return result;
+    }
+    if (services.length) {
+      // Keep the record the upstream sent (hints, ports, its own alpn) and
+      // add the key. From the last record to the first, so offsets hold.
+      let body = result.body;
+      for (const a of [...services].reverse()) {
+        body = insertEch(body, a, config);
+      }
+      return {body, ttl: result.ttl};
     }
     const rdata = svcbRdata(1, '.', [
       [SVCPARAM_ALPN, alpnValue(ALPN_HTTP)],
