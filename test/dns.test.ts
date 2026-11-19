@@ -6,6 +6,7 @@
 
 import assert from 'node:assert/strict';
 import {describe, test} from 'node:test';
+import {isTruncated, utf8} from '../src/wire.js';
 import {alpnValue, svcbRdata} from '../src/svcb.js';
 import {EDE_BLOCKED} from '../src/constants.js';
 import {
@@ -781,5 +782,20 @@ describe('optOptions', () => {
     assert.deepEqual(optOptions(makeQuery('a.test', T.A, {edns: false})), []);
     const wire = makeQuery('a.test', T.A);
     assert.throws(() => optOptions(wire.subarray(0, wire.length - 4)));
+  });
+});
+
+describe('small wire helpers', () => {
+  test('utf8 gives the bytes of a text', () => {
+    assert.deepEqual(utf8('a/é'), [0x61, 0x2f, 0xc3, 0xa9]);
+    assert.deepEqual(utf8(''), []);
+  });
+
+  test('isTruncated reads the TC flag', () => {
+    const msg = makeResponse({qname: 'a.test', qtype: T.A});
+    assert.equal(isTruncated(msg), false);
+    const cut = msg.slice();
+    cut[2] |= 0x02;
+    assert.equal(isTruncated(cut), true);
   });
 });

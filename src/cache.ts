@@ -11,8 +11,8 @@ import {
   STALE_MAX_S,
   STALE_TTL,
 } from './config.js';
-import {TYPE_OPT} from './constants.js';
-import {HEADER_BYTES, rcodeOf, readRecords, u16} from './wire.js';
+import {RCODE_NOERROR, RCODE_NXDOMAIN, TYPE_OPT} from './constants.js';
+import {HEADER_BYTES, isTruncated, rcodeOf, readRecords, u16} from './wire.js';
 import type {Question, Result} from './types.js';
 
 /** A cached response. `storedAt` is in milliseconds, `ttl` in seconds. */
@@ -180,8 +180,10 @@ export function store(
   waitUntil?: (promise: Promise<unknown>) => void
 ): void {
   const rcode = rcodeOf(body);
-  const truncated = body[2] & 2;
-  if ((rcode !== 0 && rcode !== 3) || truncated) {
+  if (
+    (rcode !== RCODE_NOERROR && rcode !== RCODE_NXDOMAIN) ||
+    isTruncated(body)
+  ) {
     return;
   }
 

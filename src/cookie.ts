@@ -7,9 +7,8 @@
 
 import {OPTION_COOKIE} from './constants.js';
 import {ednsOption} from './response.js';
+import {utf8} from './wire.js';
 import type {Question} from './types.js';
-
-const encoder = new TextEncoder();
 
 /** The HMAC key of the last secret seen, so that it is imported only once. */
 let imported: {secret: string; key: Promise<CryptoKey>} | null = null;
@@ -20,7 +19,7 @@ function hmacKey(secret: string): Promise<CryptoKey> {
       secret,
       key: crypto.subtle.importKey(
         'raw',
-        encoder.encode(secret),
+        new Uint8Array(utf8(secret)),
         {name: 'HMAC', hash: 'SHA-256'},
         false,
         ['sign']
@@ -47,7 +46,7 @@ export async function cookieOption(
   try {
     const client = q.cookie.slice(0, 8);
     const key = await hmacKey(secret);
-    const input = new Uint8Array([...client, ...encoder.encode(ip ?? '')]);
+    const input = new Uint8Array([...client, ...utf8(ip ?? '')]);
     const mac = new Uint8Array(await crypto.subtle.sign('HMAC', key, input));
     const data = [...client, ...mac.subarray(0, 8)];
     return ednsOption(OPTION_COOKIE, data);

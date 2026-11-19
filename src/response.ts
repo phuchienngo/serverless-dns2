@@ -29,10 +29,9 @@ import {
   readOptions,
   u16,
   u32,
+  utf8,
 } from './wire.js';
 import type {Question} from './types.js';
-
-const encoder = new TextEncoder();
 
 /** Pad responses to a multiple of this (RFC 8467 4.1). */
 const PADDING_BLOCK = 468;
@@ -149,7 +148,7 @@ export function ednsOption(code: number, data: ArrayLike<number>): number[] {
 
 /** An EDNS option holding an Extended DNS Error (RFC 8914). */
 export function edeOption(code: number, text: string): number[] {
-  return ednsOption(OPTION_EDE, [...u16(code), ...encoder.encode(text)]);
+  return ednsOption(OPTION_EDE, [...u16(code), ...utf8(text)]);
 }
 
 /**

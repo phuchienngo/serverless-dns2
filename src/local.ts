@@ -4,7 +4,7 @@
  * names, ANY).
  */
 
-import {BLOCK_ANY, BLOCK_UNDELEGATED, REDIRECTS} from './config.js';
+import {BLOCK_ANY, BLOCK_UNDELEGATED} from './config.js';
 import {
   ALPN_HTTP,
   CLASS_IN,
@@ -17,25 +17,24 @@ import {
   RCODE_REFUSED,
   SVCPARAM_ALPN,
   SVCPARAM_DOHPATH,
-  TTL_DDR,
+  TTL_DISCOVERY,
   TTL_LOCAL,
-  TTL_SHORT,
+  TTL_UNCACHED,
   TYPES_FORMERR,
   TYPES_NOTIMP,
   TYPE_A,
   TYPE_AAAA,
   TYPE_ANY,
   TYPE_HINFO,
-  TYPE_HTTPS,
   TYPE_RESINFO,
   TYPE_SVCB,
 } from './constants.js';
+import {utf8} from './wire.js';
+import {redirectedHints} from './redirects.js';
 import {makeRecord, respond, respondNegative} from './response.js';
 import {alpnValue, svcbRdata} from './svcb.js';
 import type {Question, Result} from './types.js';
 import {isUndelegated} from './undelegated.js';
-
-const encoder = new TextEncoder();
 
 const FORMERR_TYPES = new Set(TYPES_FORMERR);
 const NOTIMP_TYPES = new Set(TYPES_NOTIMP);
@@ -51,9 +50,9 @@ export function ddrAnswer(
 ): Uint8Array {
   const rdata = svcbRdata(1, host, [
     [SVCPARAM_ALPN, alpnValue(ALPN_HTTP)],
-    [SVCPARAM_DOHPATH, [...encoder.encode('/dns-query{?dns}')]],
+    [SVCPARAM_DOHPATH, utf8('/dns-query{?dns}')],
   ]);
-  const record = makeRecord(TYPE_SVCB, TTL_DDR, rdata);
+  const record = makeRecord(TYPE_SVCB, TTL_DISCOVERY, rdata);
   return respond(q, RCODE_NOERROR, [record], undefined, hints);
 }
 
@@ -64,11 +63,11 @@ export function ddrAnswer(
 function resinfo(q: Question, host: string): Result {
   const keys = [`exterr=${EDE_PRODUCED.join(',')}`, `infourl=https://${host}/`];
   const rdata = keys.flatMap(key => {
-    const bytes = [...encoder.encode(key)];
+    const bytes = utf8(key);
     return [bytes.length, ...bytes];
   });
-  const record = makeRecord(TYPE_RESINFO, TTL_DDR, rdata);
-  return {body: respond(q, RCODE_NOERROR, [record]), ttl: TTL_DDR};
+  const record = makeRecord(TYPE_RESINFO, TTL_DISCOVERY, rdata);
+  return {body: respond(q, RCODE_NOERROR, [record]), ttl: TTL_DISCOVERY};
 }
 
 /** @return Whether this is the DDR query for this gateway (RFC 9462). */
@@ -81,7 +80,7 @@ export function isDdr(q: Question, host: string): boolean {
 
 /** An error response with no records, which clients should not cache. */
 function error(q: Question, rcode: number): Result {
-  return {body: respond(q, rcode, []), ttl: 0};
+  return {body: respond(q, rcode, []), ttl: TTL_UNCACHED};
 }
 
 /**
@@ -144,7 +143,10 @@ export function localAnswer(q: Question, host: string): Result | null {
   }
   if (q.name === 'resolver.arpa' || q.name.endsWith('.resolver.arpa')) {
     // RFC 9462: reserved for DDR; never forwarded.
-    return {body: respondNegative(q, RCODE_NOERROR, TTL_DDR), ttl: TTL_DDR};
+    return {
+      body: respondNegative(q, RCODE_NOERROR, TTL_DISCOVERY),
+      ttl: TTL_DISCOVERY,
+    };
   }
   if (q.name === 'localhost' || q.name.endsWith('.localhost')) {
     return localhost(q);
@@ -165,20 +167,9 @@ export function localAnswer(q: Question, host: string): Result | null {
 export function typeAnswer(q: Question): Result | null {
   if (BLOCK_ANY && q.type === TYPE_ANY) {
     // RFC 8482: a minimal HINFO answer.
-    const text = [...encoder.encode('RFC8482')];
+    const text = utf8('RFC8482');
     const hinfo = makeRecord(TYPE_HINFO, TTL_LOCAL, [text.length, ...text, 0]);
     return {body: respond(q, RCODE_NOERROR, [hinfo]), ttl: TTL_LOCAL};
   }
-  if (
-    !q.dnssecOk &&
-    REDIRECTS[q.name] &&
-    (q.type === TYPE_SVCB || q.type === TYPE_HTTPS)
-  ) {
-    // Service hints would reveal the original IPs: answer NODATA.
-    return {
-      body: respondNegative(q, RCODE_NOERROR, TTL_SHORT),
-      ttl: TTL_SHORT,
-    };
-  }
-  return null;
+  return redirectedHints(q);
 }

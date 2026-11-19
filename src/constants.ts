@@ -171,5 +171,9 @@ export const EDE_PRODUCED = [
  */
 export const TTL_LOCAL = 3600; // Loopback, undelegated names, ANY.
 export const TTL_BLOCKED = 300; // Blocked names.
-export const TTL_DDR = 300;
+/** DDR and RESINFO: what clients ask to find and learn about this resolver. */
+export const TTL_DISCOVERY = 300;
 export const TTL_SHORT = 60;
+/** An answer that clients should not cache, or only briefly (SERVFAIL). */
+export const TTL_UNCACHED = 0;
+export const TTL_FAILURE = 5;

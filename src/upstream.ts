@@ -6,22 +6,14 @@
 import {
   HEDGE_MAX_MS,
   HEDGE_MIN_MS,
-  REDIRECTS,
   UPSTREAM,
   UPSTREAM_BACKUP,
   UPSTREAM_TIMEOUT_MS,
 } from './config.js';
-import {TYPE_A, TYPE_AAAA} from './constants.js';
 import {buildQuery} from './query.js';
-import {
-  encodeName,
-  HEADER_BYTES,
-  parseAnswers,
-  QUESTION_POINTER,
-  rcodeOf,
-  u16,
-} from './wire.js';
-import {minTtl, respond} from './response.js';
+import {encodeName, HEADER_BYTES, u16} from './wire.js';
+import {redirectedResult, redirectTarget} from './redirects.js';
+import {minTtl} from './response.js';
 import type {Env, Question, Result} from './types.js';
 
 /**
@@ -93,19 +85,6 @@ export async function forward(env: Env, wire: Uint8Array): Promise<Uint8Array> {
   }
 }
 
-/**
- * Answers the original question with only the A/AAAA records of `resp`.
- * @param resp Upstream response for the redirect target.
- * @param q The question the client asked.
- */
-function redirected(resp: Uint8Array, q: Question): Result {
-  const rcode = rcodeOf(resp);
-  const records = parseAnswers(resp)
-    .filter(a => a.type === TYPE_A || a.type === TYPE_AAAA)
-    .map(a => [...QUESTION_POINTER, ...resp.subarray(a.start, a.end)]);
-  return {body: respond(q, rcode, records), ttl: minTtl(resp)};
-}
-
 /** The DNSSEC flags of a query to the upstream resolver. */
 export interface QueryFlags {
   dnssec: boolean;
@@ -130,13 +109,11 @@ export async function askUpstream(
   ecs: number[] | null,
   flags: QueryFlags
 ): Promise<Result> {
-  const target = REDIRECTS[q.name];
-  // The redirect answer is made here, unsigned: a client that asks for DNSSEC
-  // records (DO) gets the real answer, like ECH and DNS64 do.
-  if (!q.dnssecOk && target && (q.type === TYPE_A || q.type === TYPE_AAAA)) {
+  const target = redirectTarget(q);
+  if (target) {
     const question = [...encodeName(target), ...u16(q.type), 0, 1];
     const resp = await forward(env, buildQuery(question, ecs, flags));
-    return redirected(resp, q);
+    return redirectedResult(resp, q);
   }
   const body = await forward(env, buildQuery(q.raw, ecs, flags));
   body.set(u16(q.id), 0);

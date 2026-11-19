@@ -10,6 +10,8 @@ const encoder = new TextEncoder();
 /** Header flag bits: RD is in byte 2 of a message, CD in byte 3. */
 export const FLAG_RD = 0x01;
 export const FLAG_CD = 0x10;
+/** The TC (truncated) flag, in byte 2. */
+export const FLAG_TC = 0x02;
 /** QR in byte 2 and RA in byte 3 have the same bit. */
 export const FLAG_QR_OR_RA = 0x80;
 /** The response code, the low bits of byte 3 (the rest is in the OPT record). */
@@ -254,7 +256,17 @@ export function optOptions(
   }));
 }
 
+/** @return Whether the message has the TC (truncated) flag. */
+export function isTruncated(resp: Uint8Array): boolean {
+  return (resp[2] & FLAG_TC) !== 0;
+}
+
 /** @return The response code of a message, without the bits held in OPT. */
 export function rcodeOf(resp: Uint8Array): number {
   return resp[3] & RCODE_MASK;
+}
+
+/** @return The UTF-8 bytes of a text. */
+export function utf8(text: string): number[] {
+  return [...encoder.encode(text)];
 }

@@ -3,16 +3,14 @@
  * reading and extending the SvcParams of a record in a message.
  */
 
-import {readName, encodeName, u16, type DnsRecord} from './wire.js';
-
-const encoder = new TextEncoder();
+import {encodeName, readName, u16, utf8, type DnsRecord} from './wire.js';
 
 /**
  * @param protocols ALPN ids, such as `h2`.
  * @return The value of an `alpn` SvcParam: each id preceded by its length.
  */
 export function alpnValue(protocols: string[]): number[] {
-  return protocols.flatMap(p => [p.length, ...encoder.encode(p)]);
+  return protocols.flatMap(p => [p.length, ...utf8(p)]);
 }
 
 /**

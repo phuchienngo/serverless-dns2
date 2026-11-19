@@ -13,7 +13,8 @@ import {
   OPTION_ECS,
   RCODE_NXDOMAIN,
   RCODE_SERVFAIL,
-  TTL_DDR,
+  TTL_DISCOVERY,
+  TTL_FAILURE,
   TYPE_A,
   TYPE_AAAA,
 } from './constants.js';
@@ -90,13 +91,13 @@ async function ddrResult(
       .map(r => {
         return makeRecord(
           r.type,
-          Math.min(r.ttl, TTL_DDR),
+          Math.min(r.ttl, TTL_DISCOVERY),
           [...body.subarray(r.data, r.end)],
           owner
         );
       });
   });
-  return {body: ddrAnswer(q, host, hints), ttl: TTL_DDR};
+  return {body: ddrAnswer(q, host, hints), ttl: TTL_DISCOVERY};
 }
 
 /**
@@ -257,6 +258,6 @@ export function upstreamFailure(q: Question): Result {
       code: EDE_NETWORK_ERROR,
       text: 'upstream unreachable',
     }),
-    ttl: 5,
+    ttl: TTL_FAILURE,
   };
 }

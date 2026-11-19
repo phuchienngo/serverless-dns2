@@ -49,56 +49,48 @@ function answersOf(body: Uint8Array): DnsRecord[] {
 }
 
 /**
- * CNAME uncloaking: if any CNAME target in the answer is blocked, the name is
- * a tracker hiding behind a first-party subdomain, so answer NXDOMAIN.
- * Checked on every response (a few lookups) rather than stored in the cache,
- * so newer rules apply to cached answers too.
- * @param answers The records of the answer section, if already read.
+ * Checks of an answer for a name that is not blocked. Each says why the
+ * answer must not be used, or gives null. They run on every response, also
+ * cached ones, and are not stored in the cache, so newer rules apply to
+ * cached answers too.
  */
-export function uncloak(
-  q: Question,
-  result: Result,
-  answers?: DnsRecord[]
-): Result {
-  if (!CNAME_UNCLOAK || peekRules().allow?.test(q.name)) {
-    return result;
-  }
-  for (const target of cnameTargets(result.body, answers)) {
-    if (blockReason(target)) {
-      return nxdomain(q, `CNAME target ${target} is blocked`);
-    }
-  }
-  return result;
-}
+const SCREENS: Array<{
+  enabled: boolean;
+  reason: (result: Result, answers: DnsRecord[]) => string | null;
+}> = [
+  {
+    // DNS rebinding: a name that resolves to an address in the client's own
+    // network (see rebinding.ts).
+    enabled: BLOCK_REBINDING,
+    reason: ({body}, answers) =>
+      rebindingAddress(body, answers) ? 'dns rebinding' : null,
+  },
+  {
+    // CNAME uncloaking: a blocked CNAME target means a tracker hiding behind
+    // a first-party subdomain.
+    enabled: CNAME_UNCLOAK,
+    reason: ({body}, answers) => {
+      const target = cnameTargets(body, answers).find(blockReason);
+      return target ? `CNAME target ${target} is blocked` : null;
+    },
+  },
+];
 
 /**
- * DNS rebinding: a name that resolves to an address in the client's own
- * network gets NXDOMAIN (see rebinding.ts). Like uncloaking, it is checked on
- * every response and not stored in the cache.
- * @param answers The records of the answer section, if already read.
- */
-export function rebinding(
-  q: Question,
-  result: Result,
-  answers?: DnsRecord[]
-): Result {
-  if (!BLOCK_REBINDING || peekRules().allow?.test(q.name)) {
-    return result;
-  }
-  return rebindingAddress(result.body, answers)
-    ? nxdomain(q, 'dns rebinding')
-    : result;
-}
-
-/**
- * What the answer for a name that is not blocked must pass: the rebinding
- * and uncloaking checks, which read the answer section once.
+ * What the answer for a name that is not blocked must pass (see SCREENS); an
+ * allow rule exempts the name. The answer section is read once.
+ * @return `result`, or NXDOMAIN with the reason of the first check it fails.
  */
 export function screen(q: Question, result: Result): Result {
   const answers = answersOf(result.body);
-  if (!answers.length) {
-    return result; // Nothing in it to check.
+  if (!answers.length || peekRules().allow?.test(q.name)) {
+    return result; // Nothing in it to check, or the name is allowed.
   }
-  const rebound = rebinding(q, result, answers);
-  return rebound === result ? uncloak(q, result, answers) : rebound;
+  for (const {enabled, reason} of SCREENS) {
+    const why = enabled ? reason(result, answers) : null;
+    if (why) {
+      return nxdomain(q, why);
+    }
+  }
+  return result;
 }
