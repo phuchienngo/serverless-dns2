@@ -26,7 +26,11 @@ const blockset = buildBlockset(
 );
 const rules = {
   block: ['^telemetry\\.', '^(.+[_.-])?adserv[_.-]'],
-  allow: ['^ok\\.tracker\\.example\\.net$', '^telemetry\\.allowed\\.com$'],
+  allow: [
+    '^ok\\.tracker\\.example\\.net$',
+    '^telemetry\\.allowed\\.com$',
+    '^rebind-allowed\\.',
+  ],
 };
 const assets = {
   async fetch(input: string) {
@@ -57,6 +61,18 @@ before(() => {
           {type: T.CNAME, ttl: 60, rdata: nameRdata(target)},
           {name: target, type: T.A, ttl: 60, rdata: ip4('1.1.1.1')},
         ],
+      });
+    }
+    if (name.startsWith('rebind') && type === T.A) {
+      const address = name.startsWith('rebind-zero')
+        ? '0.0.0.0'
+        : name.startsWith('rebind-public')
+          ? '8.8.8.8'
+          : '192.168.1.1';
+      return makeResponse({
+        qname: name,
+        qtype: type,
+        answer: [{type: T.A, ttl: 60, rdata: ip4(address)}],
       });
     }
     return makeResponse({
@@ -159,5 +175,37 @@ describe('blocking', () => {
     // cloak*.allowed.com is not allowed by the rules above, so use the exact
     // allowed name: it only has an A answer here and must pass either way.
     assert.equal((await ask('telemetry.allowed.com')).rcode, 0);
+  });
+});
+
+describe('DNS rebinding', () => {
+  const edeText = (m: ReturnType<typeof parseMsg>) =>
+    Buffer.from(
+      m.opt!.options.find(o => o.code === 15)!.data.subarray(2)
+    ).toString();
+
+  test('a public name that resolves to a private address gets NXDOMAIN with EDE 15', async () => {
+    const m = await ask('rebind-a.attacker.example.org');
+    assert.ok(isBlockedAnswer(m));
+    assert.equal(edeText(m), 'dns rebinding');
+    assert.equal(m.answer.length, 0);
+  });
+
+  test('a public address, and the 0.0.0.0 that blocklists answer, pass', async () => {
+    assert.equal((await ask('rebind-public.example.org')).rcode, 0);
+    const zero = await ask('rebind-zero.example.org');
+    assert.equal(zero.rcode, 0);
+    assert.deepEqual([...zero.answer[0].rdata], [0, 0, 0, 0]);
+  });
+
+  test('an allow rule exempts the name', async () => {
+    const m = await ask('rebind-allowed.home.example.org');
+    assert.equal(m.rcode, 0);
+    assert.deepEqual([...m.answer[0].rdata], [192, 168, 1, 1]);
+  });
+
+  test('it is also applied to cached answers', async () => {
+    await ask('rebind-cached.example.org');
+    assert.ok(isBlockedAnswer(await ask('rebind-cached.example.org')));
   });
 });

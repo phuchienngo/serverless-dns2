@@ -72,6 +72,13 @@ export const BLOCKLIST_PRECISION_BITS = 20;
 export const RULES_PATH = '/rules.json';
 
 /**
+ * DNS rebinding protection: a name whose answer holds a private, loopback or
+ * link-local address (or one in an HTTPS/SVCB hint) gets NXDOMAIN. An `allow`
+ * rule in blocklists.yaml exempts a name, such as one for a service at home.
+ */
+export const BLOCK_REBINDING = true;
+
+/**
  * Also check every CNAME target in an answer against the blocklist, so a
  * tracker hidden behind a first-party subdomain is blocked (CNAME uncloaking).
  */

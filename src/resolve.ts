@@ -4,7 +4,7 @@
  */
 
 import {lookupLocal, lookupShared, store} from './cache.js';
-import {blockReason, nxdomain, uncloak} from './blocking.js';
+import {blockReason, nxdomain, screen} from './blocking.js';
 import {getBlocklist, isReady} from './blocklist.js';
 import {
   EDE_NETWORK_ERROR,
@@ -153,7 +153,7 @@ async function resolveQuestion(
 
   if (isReady()) {
     const reason = blockReason(q.name);
-    return reason ? nxdomain(q, reason) : uncloak(q, await answer(q, options));
+    return reason ? nxdomain(q, reason) : screen(q, await answer(q, options));
   }
 
   // This isolate has not loaded the blocklist yet. Start answering while it
@@ -163,7 +163,7 @@ async function resolveQuestion(
   answering.catch(() => {}); // Its failure is reported if it is used below.
   await loading;
   const reason = blockReason(q.name);
-  return reason ? nxdomain(q, reason) : uncloak(q, await answering);
+  return reason ? nxdomain(q, reason) : screen(q, await answering);
 }
 
 /**

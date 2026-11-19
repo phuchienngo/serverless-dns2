@@ -727,12 +727,16 @@ export function copyRd(resp: Uint8Array, rd: boolean): Uint8Array {
 }
 
 /**
+ * @param answers The records of the answer section, if already read.
  * @return The lower-cased CNAME targets in the answer section, without the
  *     trailing dot. Empty if the message cannot be read.
  */
-export function cnameTargets(resp: Uint8Array): string[] {
+export function cnameTargets(
+  resp: Uint8Array,
+  answers?: DnsRecord[]
+): string[] {
   try {
-    return parseAnswers(resp)
+    return (answers ?? parseAnswers(resp))
       .filter(a => a.type === TYPE_CNAME)
       .map(a => lowerAscii(readName(resp, a.data).name.replace(/\.$/, '')));
   } catch {

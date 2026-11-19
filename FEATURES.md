@@ -35,6 +35,7 @@ Every feature, the standard it follows, where it lives and which test covers it.
 | Blocklist (Golomb-coded set in indexed blocks, subdomains covered) | none | `blockset.ts`, `blocklist.ts` | `blockset.test.ts`, `blocking.test.ts` |
 | Blocklist build: list parsing, dedupe, regex drop | hosts / adblock syntax | `scripts/blocklist-lib.ts` | `blockset.test.ts` |
 | Regex block/allow rules (allow wins), safety checks | none | `regexlist.ts` | `rules.test.ts`, `blocking.test.ts` |
+| DNS rebinding protection: private, loopback, link-local and shared addresses (also in HTTPS/SVCB hints) get NXDOMAIN with EDE 15; `allow` rules exempt | none (as dnsmasq `stop-dns-rebind`, Unbound `private-address`) | `rebinding.ts`, `blocking.ts` | `rebinding.test.ts`, `blocking.test.ts` |
 | CNAME uncloaking | none | `resolve.ts` | `blocking.test.ts` |
 | JSON/RFC 3597 record text, AAAA compression | RFC 3597, 5952 | `format.ts` | `format.test.ts` |
 

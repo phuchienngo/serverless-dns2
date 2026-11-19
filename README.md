@@ -79,6 +79,12 @@ hash list. Try rules with `npx tsx scripts/match-regex.ts name...` (checks the r
 CNAME uncloaking (`CNAME_UNCLOAK` in `src/config.ts`): every CNAME target in an answer is also checked against the
 blocklist, so a tracker hidden behind a first-party subdomain (`metrics.site.com -> x.tracker.net`) gets NXDOMAIN.
 
+DNS rebinding protection (`BLOCK_REBINDING` in `src/config.ts`): if the answer for a name holds a private, shared (100.64/10),
+loopback or link-local address (A, AAAA, IPv4-mapped, or the `ipv4hint`/`ipv6hint` of an HTTPS/SVCB record), the name gets
+NXDOMAIN with EDE 15 ("dns rebinding"), so a web page cannot reach your router or local services through a public name. `0.0.0.0`
+and `::` (what blocklists answer) pass. Like uncloaking it is checked on every response, also cached ones. A name that must resolve to a
+private address (a service at home) goes in `allow:` in `blocklists.yaml`.
+
 Blocked names get NXDOMAIN. Each isolate loads the file once into memory.
 
 ## Latency

@@ -147,6 +147,7 @@ export const ECS_FAMILIES: Record<number, {bits: number; prefix: number}> = {
 /** SvcParamKeys (RFC 9460, 9461) and the ALPN ids of this gateway. */
 export const SVCPARAM_ALPN = 1;
 export const SVCPARAM_IPV4HINT = 4;
+export const SVCPARAM_IPV6HINT = 6;
 export const SVCPARAM_ECH = 5;
 export const SVCPARAM_DOHPATH = 7;
 export const ALPN_HTTP = ['h2', 'h3'];
