@@ -7,7 +7,7 @@
 import {MAX_DNS_PARAM, MAX_QUERY} from './config.js';
 import {RECORD_TYPES, TYPE_NAPTR, TYPE_PTR} from './constants.js';
 import {makeQuestion, parseQuestion} from './dns.js';
-import {clientEcs, echoClientEcs, parseEcsParam, reverseName} from './ecs.js';
+import {clientEcs, parseEcsParam, reverseName} from './ecs.js';
 import {toJson} from './format.js';
 import {resolve, upstreamFailure} from './resolve.js';
 import type {Context, Question, ResolveOptions, Result} from './types.js';
@@ -30,14 +30,16 @@ function formatTiming(timing?: Record<string, number>): string {
 }
 
 /**
- * @return A `application/dns-message` response.
+ * @return The headers of a response: its type, how long a client may keep it,
+ *     whether the gateway had it cached, and Server-Timing.
  */
-function wireResponse(
+function responseHeaders(
+  contentType: string,
   result: Result,
   timing?: Record<string, number>
-): Response {
+): Record<string, string> {
   const headers: Record<string, string> = {
-    'content-type': 'application/dns-message',
+    'content-type': contentType,
     'cache-control': `private, max-age=${result.ttl}`,
   };
   if (result.hit) {
@@ -47,7 +49,19 @@ function wireResponse(
   if (serverTiming) {
     headers['server-timing'] = serverTiming;
   }
-  return new Response(result.body, {headers});
+  return headers;
+}
+
+/**
+ * @return A `application/dns-message` response.
+ */
+function wireResponse(
+  result: Result,
+  timing?: Record<string, number>
+): Response {
+  return new Response(result.body, {
+    headers: responseHeaders('application/dns-message', result, timing),
+  });
 }
 
 /** The options for resolving a request to `url`, with room for Server-Timing. */
@@ -138,15 +152,11 @@ export async function handle(
   // Honour a subnet the client chose itself; an empty one (privacy signal)
   // is ignored, so the connecting IP is used.
   const options = makeOptions(url, ctx);
-  const ecs = clientEcs(wire);
+  const ecs = clientEcs(question.ecs);
   if (ecs) {
     options.ecs = ecs;
   }
   const result = await resolveOrFail(question, options);
-  if (ecs) {
-    // The response repeats the subnet as the client sent it, not as clamped.
-    result.body = echoClientEcs(result.body, wire);
-  }
   return wireResponse(result, options.timing);
 }
 
@@ -250,16 +260,10 @@ export async function handleJson(
       Comment: 'bad upstream response',
     };
   }
-  const headers: Record<string, string> = {
-    'content-type': 'application/json; charset=UTF-8',
-    'cache-control': `private, max-age=${result.ttl}`,
-  };
-  const serverTiming = formatTiming(options.timing);
-  if (serverTiming) {
-    headers['server-timing'] = serverTiming;
-  }
-  if (result.hit) {
-    headers['x-cache'] = 'HIT';
-  }
+  const headers = responseHeaders(
+    'application/json; charset=UTF-8',
+    result,
+    options.timing
+  );
   return new Response(JSON.stringify(json), {headers});
 }

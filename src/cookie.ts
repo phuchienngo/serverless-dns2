@@ -6,7 +6,7 @@
  */
 
 import {OPTION_COOKIE} from './constants.js';
-import {u16} from './dns.js';
+import {ednsOption} from './dns.js';
 import type {Question} from './types.js';
 
 const encoder = new TextEncoder();
@@ -50,7 +50,7 @@ export async function cookieOption(
     const input = new Uint8Array([...client, ...encoder.encode(ip ?? '')]);
     const mac = new Uint8Array(await crypto.subtle.sign('HMAC', key, input));
     const data = [...client, ...mac.subarray(0, 8)];
-    return [...u16(OPTION_COOKIE), ...u16(data.length), ...data];
+    return ednsOption(OPTION_COOKIE, data);
   } catch {
     imported = null; // Try the key again next time.
     return null; // A cookie is a courtesy: the answer goes out without one.

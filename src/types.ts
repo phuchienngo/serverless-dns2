@@ -27,6 +27,8 @@ export interface Question {
   padding: boolean;
   /** The EDNS Cookie option (RFC 7873): client cookie, then server cookie. */
   cookie: number[] | null;
+  /** The data of the EDNS Client Subnet option (RFC 7871), as sent. */
+  ecs: Uint8Array | null;
   /** The OPT record is invalid (RFC 6891 6.1.1): answer FORMERR. */
   malformed: boolean;
 }

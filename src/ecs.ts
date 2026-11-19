@@ -6,7 +6,13 @@ import {
   FAMILY_IPV6,
   OPTION_ECS,
 } from './constants.js';
-import {addOptOption, optOptions, removeOptOption, u16} from './dns.js';
+import {
+  addOptOption,
+  ednsOption,
+  removeOptOption,
+  optOptions,
+  u16,
+} from './dns.js';
 
 /**
  * Parses an IPv4 or IPv6 address. IPv4-mapped IPv6 becomes plain IPv4.
@@ -80,7 +86,7 @@ function buildOption(family: number, address: number[], prefix: number) {
     bytes[byteCount - 1] &= (0xff << (8 - partialBits)) & 0xff; // Zero the rest.
   }
   const data = [...u16(family), prefix, 0, ...bytes];
-  return [...u16(OPTION_ECS), ...u16(data.length), ...data];
+  return ednsOption(OPTION_ECS, data);
 }
 
 /**
@@ -97,80 +103,62 @@ export function parseEcsParam(param: string): number[] | null {
 }
 
 /**
- * Reads the client's own ECS option from a DNS query (as sent by dnsproxy or
- * AdGuard Home with `edns-addr`). The subnet is clamped to /24 (IPv4) or /48
- * (IPv6) to keep the cache effective and the client's privacy.
+ * Reads the client's own ECS option (as sent by dnsproxy or AdGuard Home with
+ * `edns-addr`). The subnet is clamped to /24 (IPv4) or /48 (IPv6) to keep the
+ * cache effective and the client's privacy.
+ * @param data The data of the option, as sent; null if the query had none.
  * @return The option bytes; null if there is none or it is malformed (the
  *     connecting IP is used then). An empty one (source prefix 0 or an
  *     all-zero address: a privacy signal such as Firefox's `::/0`, "do not
  *     locate me") gives a source-prefix-0 option, which is sent upstream as it
  *     is so that no subnet is used (RFC 7871 7.1.2), and comes back with scope 0.
  */
-export function clientEcs(wire: Uint8Array): number[] | null {
-  try {
-    const option = optOptions(wire).find(
-      o => o.code === OPTION_ECS && o.data.length >= 4
-    );
-    if (!option) {
-      return null;
-    }
-    const {data} = option;
-    const family = (data[0] << 8) | data[1];
-    const source = data[2];
-    const address = Array.from(data.subarray(4));
-    const spec = ECS_FAMILIES[family];
-    if (
-      !spec ||
-      source > spec.bits ||
-      address.length !== Math.ceil(source / 8)
-    ) {
-      return null;
-    }
-    if (source === 0 || address.every(b => b === 0)) {
-      return buildOption(family, [], 0);
-    }
-    const padded = [
-      ...address,
-      ...Array(spec.bits / 8 - address.length).fill(0),
-    ];
-    return buildOption(family, padded, Math.min(source, spec.prefix));
-  } catch {
-    return null; // Malformed: behave as if the client sent no ECS.
+export function clientEcs(data: Uint8Array | null): number[] | null {
+  if (!data || data.length < 4) {
+    return null;
   }
+  const family = (data[0] << 8) | data[1];
+  const source = data[2];
+  const address = Array.from(data.subarray(4));
+  const spec = ECS_FAMILIES[family];
+  if (!spec || source > spec.bits || address.length !== Math.ceil(source / 8)) {
+    return null;
+  }
+  if (source === 0 || address.every(b => b === 0)) {
+    return buildOption(family, [], 0);
+  }
+  const padded = [...address, ...Array(spec.bits / 8 - address.length).fill(0)];
+  return buildOption(family, padded, Math.min(source, spec.prefix));
 }
 
 /**
  * Gives the ECS option of a response the source prefix and address the client
  * sent (RFC 7871 7.2.2), as `clientEcs` shortened them. The scope is the
  * upstream's, at most the source prefix.
- * @param wire The client's query.
+ * @param sent The data of the client's option, as sent.
  * @return `response` unchanged if either has no ECS option.
  */
 export function echoClientEcs(
   response: Uint8Array,
-  wire: Uint8Array
+  sent: Uint8Array | null
 ): Uint8Array {
   try {
-    const sent = optOptions(wire).find(
-      o => o.code === OPTION_ECS && o.data.length >= 4
-    );
-    const got = optOptions(response).find(
-      o => o.code === OPTION_ECS && o.data.length >= 4
-    );
-    if (!sent || !got || sent.data[2] === got.data[2]) {
+    const got = optOptions(response).find(o => o.code === OPTION_ECS);
+    if (!sent || sent.length < 4 || !got || got.data.length < 4) {
+      return response;
+    }
+    if (sent[2] === got.data[2]) {
       return response;
     }
     const data = [
-      ...sent.data.subarray(0, 2),
-      sent.data[2],
-      Math.min(got.data[3], sent.data[2]),
-      ...sent.data.subarray(4),
+      ...sent.subarray(0, 3),
+      Math.min(got.data[3], sent[2]),
+      ...sent.subarray(4),
     ];
-    return addOptOption(removeOptOption(response, OPTION_ECS), [
-      ...u16(OPTION_ECS),
-      ...u16(data.length),
-      ...data,
-    ]);
+    return addOptOption(
+      removeOptOption(response, OPTION_ECS),
+      ednsOption(OPTION_ECS, data)
+    );
   } catch {
     return response;
   }

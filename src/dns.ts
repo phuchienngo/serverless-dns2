@@ -6,6 +6,7 @@ import {MAX_QUERY} from './config.js';
 import {
   CLASS_IN,
   OPTION_COOKIE,
+  OPTION_ECS,
   OPTION_EDE,
   OPTION_PADDING,
   TYPE_CNAME,
@@ -276,6 +277,7 @@ interface QueryOpt {
   version: number;
   padding: boolean;
   cookie: number[] | null;
+  ecs: Uint8Array | null;
 }
 
 /** RFC 7873 4: a client cookie of 8 bytes, then a server cookie of 8-32. */
@@ -303,8 +305,10 @@ function findOpt(buf: Uint8Array): {opt: QueryOpt | null; malformed: boolean} {
     const cookieBytes = cookie
       ? [...buf.subarray(cookie.start + 4, cookie.end)]
       : null;
+    const subnet = options.find(o => o.code === OPTION_ECS);
     return {
       opt: {
+        ecs: subnet ? buf.slice(subnet.start + 4, subnet.end) : null,
         flags: view.getUint16(first.start + 6),
         version: buf[first.start + 5],
         padding: options.some(o => o.code === OPTION_PADDING),
@@ -376,6 +380,7 @@ export function parseQuestion(buf: Uint8Array): Question {
     ednsVersion: opt?.version ?? 0,
     padding: opt?.padding ?? false,
     cookie: opt?.cookie ?? null,
+    ecs: opt?.ecs ?? null,
     malformed,
   };
 }
@@ -410,6 +415,7 @@ export function makeQuestion(
     ednsVersion: 0,
     padding: false,
     cookie: null,
+    ecs: null,
     malformed: false,
   };
 }
@@ -555,10 +561,14 @@ function build(
   ]);
 }
 
+/** @return An EDNS option: its code, its length and the data. */
+export function ednsOption(code: number, data: ArrayLike<number>): number[] {
+  return [...u16(code), ...u16(data.length), ...Array.from(data)];
+}
+
 /** An EDNS option holding an Extended DNS Error (RFC 8914). */
 export function edeOption(code: number, text: string): number[] {
-  const bytes = encoder.encode(text);
-  return [...u16(OPTION_EDE), ...u16(2 + bytes.length), ...u16(code), ...bytes];
+  return ednsOption(OPTION_EDE, [...u16(code), ...encoder.encode(text)]);
 }
 
 /**
@@ -678,11 +688,10 @@ export function stripOpt(resp: Uint8Array): Uint8Array {
 export function padResponse(resp: Uint8Array): Uint8Array {
   const size =
     (PADDING_BLOCK - ((resp.length + 4) % PADDING_BLOCK)) % PADDING_BLOCK;
-  return addOptOption(resp, [
-    ...u16(OPTION_PADDING),
-    ...u16(size),
-    ...new Array<number>(size).fill(0),
-  ]);
+  return addOptOption(
+    resp,
+    ednsOption(OPTION_PADDING, new Array(size).fill(0))
+  );
 }
 
 /**

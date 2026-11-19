@@ -19,23 +19,23 @@ import {
 } from './constants.js';
 import {
   addOptOption,
-  encodeName,
-  makeQuestion,
   makeRecord,
-  parseAnswers,
   copyRd,
   edeOption,
   padResponse,
-  rcodeOf,
   removeOptOption,
   respond,
   stripOpt,
+  encodeName,
+  parseAnswers,
+  rcodeOf,
+  makeQuestion,
 } from './dns.js';
 import {cookieOption} from './cookie.js';
 import {withDns64} from './dns64.js';
 import {getCloudflareRanges} from './cloudflare-ips.js';
 import {addEch, startEchProbe} from './ech.js';
-import {makeEcs} from './ecs.js';
+import {echoClientEcs, makeEcs} from './ecs.js';
 import {ddrAnswer, isDdr, localAnswer, typeAnswer} from './local.js';
 import type {Question, ResolveOptions, Result} from './types.js';
 import {askUpstream, coalesce, forward, queryFlags} from './upstream.js';
@@ -112,30 +112,41 @@ export async function resolve(
   const result = options.dns64
     ? await withDns64(q, dns64Key(q, options), a => resolveQuestion(a, options))
     : await resolveQuestion(q, options);
+  return {...result, body: await shape(q, result, options)};
+}
+
+/**
+ * Shapes an answer for the client that asked: its RD flag, the EDNS parts
+ * (an OPT record only if it sent one, ECS as it sent it, EDE for a stale
+ * answer, a cookie, padding last so that the size is final).
+ */
+async function shape(
+  q: Question,
+  result: Result,
+  options: ResolveOptions
+): Promise<Uint8Array> {
   let body = copyRd(result.body, q.rd);
-  if (!options.ecs) {
-    // RFC 7871 7.2.2: no ECS option in a response to a query without one.
-    body = removeOptOption(body, OPTION_ECS);
-  }
   if (!q.edns) {
     // The upstream always sends an OPT record; a client that sent none must
     // not get one (RFC 6891).
-    body = stripOpt(body);
-  } else {
-    if (result.stale) {
-      const nxdomain = rcodeOf(body) === RCODE_NXDOMAIN;
-      const code = nxdomain ? EDE_STALE_NXDOMAIN : EDE_STALE_ANSWER;
-      body = addOptOption(body, edeOption(code, ''));
-    }
-    const cookie = await cookieOption(q, options.ip, options.env.COOKIE_SECRET);
-    if (cookie) {
-      body = addOptOption(body, cookie);
-    }
-    if (q.padding) {
-      body = padResponse(body); // Last, so that the size is final.
-    }
+    return stripOpt(body);
   }
-  return {...result, body};
+  if (options.ecs) {
+    body = echoClientEcs(body, q.ecs);
+  } else {
+    // RFC 7871 7.2.2: no ECS option in a response to a query without one.
+    body = removeOptOption(body, OPTION_ECS);
+  }
+  if (result.stale) {
+    const code =
+      rcodeOf(body) === RCODE_NXDOMAIN ? EDE_STALE_NXDOMAIN : EDE_STALE_ANSWER;
+    body = addOptOption(body, edeOption(code, ''));
+  }
+  const cookie = await cookieOption(q, options.ip, options.env.COOKIE_SECRET);
+  if (cookie) {
+    body = addOptOption(body, cookie);
+  }
+  return q.padding ? padResponse(body) : body;
 }
 
 async function resolveQuestion(
