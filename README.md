@@ -1,4 +1,4 @@
-# DoH gateway (Cloudflare Pages)
+# DoH gateway (Cloudflare Workers)
 
 - `/dns-query` — RFC 8484 DoH (GET `?dns=`, POST `application/dns-message`). Status codes follow Google Public DNS.
 - `/resolve` — Google-style JSON API (GET): `name`, `type`, `do`, `cd`, `ct`, `edns_client_subnet`.
@@ -6,11 +6,11 @@
 
 Config: the only secret is the optional `COOKIE_SECRET` (see DNS Cookies below). The upstream DoH URL (`UPSTREAM`, optional `UPSTREAM_BACKUP`) and the other knobs are in `src/config.ts`.
 
-Layout: `src/` (TypeScript logic; entry `core.ts`), `functions/dns-query.ts` and `functions/resolve.ts` (Pages adapters).
+Layout: `src/` (TypeScript logic; `core.ts` is the gateway, `worker.ts` the Workers entry point that routes `/dns-query` and `/resolve`; the rest of `public/` is served as static assets).
 
 Dev: `npm install`, `npm run check` (tsc), `npm run format` (Prettier, Google/gts style).
 
-Deploy: `npx wrangler pages deploy --branch main` (or push to `main`).
+Deploy: push to `main` (GitHub Actions builds the lists and runs `wrangler deploy`), or `npm run deploy` from your machine.
 
 DDR (Android 16+ Private DNS): add in your zone
 `_dns.dns.example.com  SVCB  1 dns.example.com. alpn="h2,h3" dohpath="/dns-query{?dns}"`
@@ -45,7 +45,7 @@ Three optional features, none of which touches the caches or their TTLs.
   CNAME to the reverse name of the embedded IPv4 address followed by that name's PTR records (RFC 6147 5.3.1).
 - **Resolver information** (RFC 9606): `RESINFO` for this gateway's host name answers locally with `exterr=3,15,19,23`
   (the Extended DNS Errors it produces) and `infourl=https://<host>/`. Clients that found the gateway through DDR can ask for it.
-- **DNS Cookies** (RFC 7873): set the secret with `npx wrangler pages secret put COOKIE_SECRET --project-name serverless-dns2`
+- **DNS Cookies** (RFC 7873): set the secret with `npx wrangler secret put COOKIE_SECRET`
   (for example from `openssl rand -hex 32`) and redeploy. A query with a Cookie option then gets the client cookie back with
   a server cookie (first 8 bytes of HMAC-SHA256 of the client cookie and the client IP). Cookies are never enforced, since HTTPS
   already stops spoofing, so a query without one, or with a stale one, is answered normally; a cookie of an invalid length is FORMERR.
@@ -66,9 +66,8 @@ from data this gateway does not validate.
    A name that is not listed is wrongly blocked with a probability of about 2^-20 per suffix looked up (set
    `BLOCKLIST_PRECISION_BITS` in `src/config.ts`; listed names are never missed). If a source fails, nothing is
    written and the build fails.
-3. The file is not committed. Cloudflare Pages builds it on every push: in the project's
-   Settings -> Builds, set **Build command** to `npm run build-lists` and **Build output directory**
-   to `public`. `npm run deploy` builds it locally and uploads.
+3. The file is not committed. The GitHub workflow builds it on every push to `main` and deploys the Worker with it
+   (see below); `npm run deploy` does the same from your machine.
 
 Rules: `block:` and `allow:` in `blocklists.yaml` take domains (which also cover their subdomains) or `/regex/` rules,
 matched against the lower-case name without a trailing dot (anchor with `^`/`$` yourself). The build rejects lookaround,
@@ -95,10 +94,10 @@ Blocked names get NXDOMAIN. Each isolate loads the file once into memory.
   `UPSTREAM_BACKUP` (a second DoH URL) or else to `UPSTREAM` again. The first answer wins.
 - `Server-Timing` on the `/resolve` and `/dns-query` responses shows `cache`, `upstream` and, on a cold isolate, `block`/`asset`.
 
-Daily rebuild: `.github/workflows/rebuild.yml` prunes old deployments (keeps the newest 10) and then calls a Pages
-Deploy Hook (also runnable from the Actions tab). Setup, once:
-- Pages -> Settings -> Builds -> Deploy hooks: add a hook for `main`; store its URL as the GitHub secret `PAGES_DEPLOY_HOOK`.
-- Cloudflare API token with permission "Account -> Cloudflare Pages -> Edit"; store it as `CLOUDFLARE_API_TOKEN`,
-  and your account id as `CLOUDFLARE_ACCOUNT_ID`.
+Build and deploy: `.github/workflows/rebuild.yml` runs `npm run build-lists` and `wrangler deploy` on every push to
+`main`, every day (so the lists stay current) and from the Actions tab. Setup, once: a Cloudflare API token with the
+permission "Account -> Workers Scripts -> Edit" stored as the GitHub secret `CLOUDFLARE_API_TOKEN`, and your account id
+as `CLOUDFLARE_ACCOUNT_ID`. The domain is attached to the Worker in the dashboard (Workers & Pages -> the Worker ->
+Settings -> Domains & Routes).
 
-A failed build leaves the previous deployment serving.
+A failed build stops before the deploy, so the previous version keeps serving.

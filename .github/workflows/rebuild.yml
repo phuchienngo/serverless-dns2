@@ -1,48 +1,32 @@
-# Rebuilds the blocklist every day by triggering a Cloudflare Pages build.
-# The build runs `npm run build-lists`; if a source fails the build fails and
-# the previous deployment keeps serving. Old deployments are pruned first.
-name: Rebuild blocklist
+# Builds the blocklist and deploys the Worker: on every push to main, and every
+# day so the lists stay current. If a source fails, the build fails before the
+# deploy and the previous version keeps serving.
+name: Build and deploy
 
 on:
+  push:
+    branches: [main]
   schedule:
     - cron: '17 20 * * *' # 03:17 in Vietnam (UTC+7)
   workflow_dispatch:
 
-env:
-  PROJECT: serverless-dns2
-  KEEP: 10 # newest deployments to keep
+concurrency:
+  group: deploy
+  cancel-in-progress: false
 
 jobs:
-  rebuild:
+  deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Delete old deployments
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build-lists
+      - name: Deploy
         env:
-          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: |
-          project="https://api.cloudflare.com/client/v4/accounts/$ACCOUNT/pages/projects/$PROJECT"
-          api="$project/deployments"
-          call() { curl --silent --show-error -H "Authorization: Bearer $TOKEN" "$@"; }
-          # Print Cloudflare's own error message when a call fails.
-          check() { jq -e '.success' >/dev/null <<<"$1" || { echo "API error: $(jq -c '.errors' <<<"$1")"; exit 1; }; }
-
-          info=$(call "$project"); check "$info"
-          # Never touch the deployment that is serving production right now.
-          live=$(jq -r '.result.canonical_deployment.id // empty' <<<"$info")
-          [ -n "$live" ] || { echo "no live deployment id"; exit 1; }
-
-          for round in 1 2 3 4 5; do
-            list=$(call "$api?per_page=25"); check "$list"
-            ids=$(jq -r --argjson keep "$KEEP" --arg live "$live" \
-              '.result | sort_by(.created_on) | reverse | .[$keep:][] | select(.id != $live) | .id' <<<"$list")
-            [ -z "$ids" ] && break
-            for id in $ids; do
-              out=$(call -X DELETE "$api/$id?force=true")
-              jq -r --arg id "$id" 'if .success then "deleted \($id)" else "kept \($id): \(.errors[0].message)" end' <<<"$out"
-            done
-          done
-      - name: Trigger the Pages deploy hook
-        env:
-          HOOK: ${{ secrets.PAGES_DEPLOY_HOOK }}
-        run: curl --fail --silent --show-error -X POST "$HOOK"
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler deploy

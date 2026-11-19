@@ -4,8 +4,8 @@
   "type": "module",
   "scripts": {
     "check": "tsc --noEmit && tsc --noEmit -p scripts && tsc --noEmit -p test",
-    "format": "prettier --write src functions",
-    "deploy": "npm run build-lists && wrangler pages deploy --branch main",
+    "format": "prettier --write src",
+    "deploy": "npm run build-lists && wrangler deploy",
     "build-lists": "tsx scripts/build-blocklist.ts",
     "test": "tsx --test test/*.test.ts"
   },

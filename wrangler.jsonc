@@ -1,5 +1,12 @@
 {
   "name": "serverless-dns2",
-  "pages_build_output_dir": "./public",
-  "compatibility_date": "2026-11-01"
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-11-01",
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    // The Worker runs only for the two API paths; the rest (index page, the
+    // blocklist files) is served straight from the assets.
+    "run_worker_first": ["/dns-query", "/resolve"]
+  }
 }

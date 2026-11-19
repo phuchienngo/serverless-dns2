@@ -43,7 +43,7 @@ export interface Result {
 }
 
 export interface Env {
-  /** Static assets of the Pages project; holds the blocklist. */
+  /** Static assets of the Worker; holds the blocklist. */
   ASSETS?: Fetcher;
   /** Secret for DNS Cookies (RFC 7873); without it cookies are ignored. */
   COOKIE_SECRET?: string;

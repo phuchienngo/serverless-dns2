@@ -148,7 +148,7 @@ export function decodeBlockset(buffer: ArrayBuffer): BlockSet {
   }
   const view = new DataView(buffer);
   if (view.getUint32(0, true) !== MAGIC) {
-    // Pages may answer a missing file with index.html; old assets are invalid.
+    // A missing asset may be answered with index.html; old assets are invalid.
     throw new Error('not a blocklist');
   }
   const count = view.getUint32(4, true);

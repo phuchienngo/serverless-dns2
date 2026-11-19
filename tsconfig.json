@@ -12,5 +12,5 @@
     "noImplicitReturns": true,
     "noUnusedLocals": true
   },
-  "include": ["src", "functions"]
+  "include": ["src"]
 }
