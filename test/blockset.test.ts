@@ -229,6 +229,37 @@ describe('blocks and index', () => {
     }
   });
 
+  test('lookups agree with the decoded hashes for every Rice parameter', () => {
+    // Small k makes long unary parts (gaps that span windows), large k makes
+    // the remainder not fit beside the unary part: both leave the fast path.
+    const next = random(3);
+    const domains = Array.from(
+      {length: 700},
+      () => `${randomLabel(next, 9)}.test`
+    );
+    for (const k of [0, 1, 3, 8, 12, 20, 27, 31]) {
+      const {set} = decode(domains, k);
+      const hashes = new Set(decodeAll(set));
+      assert.ok(
+        domains.every(d => isBlocked(set, d)),
+        `k=${k}: found`
+      );
+      for (let i = 0; i < 3000; i++) {
+        const name = `${randomLabel(next, 12)}.example`;
+        let expected = false;
+        for (let at = name.length - 1; at >= 0; at--) {
+          if (
+            (at === 0 || name[at - 1] === '.') &&
+            hashes.has(hashDomain(name.slice(at), set.bits))
+          ) {
+            expected = true;
+          }
+        }
+        assert.equal(isBlocked(set, name), expected, `k=${k} ${name}`);
+      }
+    }
+  });
+
   test('handles hashes above 32 bits (the index holds two words)', () => {
     const next = random(11);
     const domains = Array.from(

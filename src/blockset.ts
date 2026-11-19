@@ -221,9 +221,23 @@ function contains(set: BlockSet, value: number): boolean {
   if (current === value) {
     return true;
   }
-  const gaps = new GapReader(set.stream, set.k, set.offsets[block]);
+  // The lookup's hot loop, with the usual gap (its unary part and remainder
+  // both inside one 32-bit window) read in place: a GapReader per lookup
+  // cost about a third of it. A rarer, longer gap is read by a GapReader.
+  const {stream, k} = set;
+  const scale = 2 ** k;
+  let pos = set.offsets[block];
   for (let i = blockLength(set, block) - 1; i > 0; i--) {
-    current += gaps.next();
+    const w = window(stream, pos);
+    const ones = w !== 0xffffffff ? Math.clz32(~w) : 32;
+    if (ones + 1 + k <= 32) {
+      pos += ones + 1 + k;
+      current += ones * scale + (k > 0 ? (w << (ones + 1)) >>> (32 - k) : 0);
+    } else {
+      const gaps = new GapReader(stream, k, pos);
+      current += gaps.next();
+      pos = gaps.pos;
+    }
     if (current >= value) {
       return current === value;
     }
