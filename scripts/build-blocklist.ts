@@ -7,7 +7,8 @@ import {mkdir, readFile, writeFile} from 'node:fs/promises';
 import {dirname, join} from 'node:path';
 import {parse} from 'yaml';
 import {buildBlockset, dropMatched, parseDomain} from './blocklist-lib.js';
-import {BLOCKLIST_PRECISION_BITS} from '../src/config.js';
+import {parseCidrs} from '../src/ipv4.js';
+import {BLOCKLIST_PRECISION_BITS, CLOUDFLARE_IPS_URL} from '../src/config.js';
 import {
   checkPattern,
   compilePatterns,
@@ -94,12 +95,24 @@ async function main() {
     console.warn('warning: no domains; the blocklist will be empty');
   }
 
+  // Cloudflare's IPv4 ranges, for ech.ts. Fails the build if unusable.
+  const cloudflare = (await readSource(CLOUDFLARE_IPS_URL))
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(Boolean);
+  parseCidrs(cloudflare);
+  console.log(`${cloudflare.length} Cloudflare IPv4 ranges`);
+
   const blockset = buildBlockset(domains, BLOCKLIST_PRECISION_BITS);
   // Written last, so a failed source leaves the previous files untouched.
   await mkdir(dirname(outPath), {recursive: true});
   await writeFile(
     join(dirname(outPath), 'rules.json'),
     JSON.stringify({block: block.patterns, allow: allowPatterns})
+  );
+  await writeFile(
+    join(dirname(outPath), 'cloudflare-ips.json'),
+    JSON.stringify({v4: cloudflare})
   );
   await writeFile(outPath, blockset);
   console.log(`${blockset.byteLength} bytes -> ${outPath}`);

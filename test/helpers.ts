@@ -8,6 +8,7 @@ import {mock} from 'node:test';
 import {UPSTREAM} from '../src/config.js';
 import {resetBlocklist} from '../src/blocklist.js';
 import {resetCache} from '../src/cache.js';
+import {resetCloudflareRanges} from '../src/cloudflare-ips.js';
 import {resetEch} from '../src/ech.js';
 import {resetUpstream} from '../src/upstream.js';
 
@@ -448,5 +449,6 @@ export function resetState(): void {
   resetCache();
   resetUpstream();
   resetEch();
+  resetCloudflareRanges();
   resetBlocklist();
 }

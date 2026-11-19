@@ -27,7 +27,7 @@ then set `dns_ddr_version 1` and `networkmonitor_async_privdns_resolution 1` via
 - Padding (RFC 8467): a query with an EDNS Padding option gets its response padded to a multiple of 468 bytes. Stale
   answers carry EDE 3 (RFC 8767). `localhost` and `*.localhost` answer 127.0.0.1 / ::1 (RFC 6761), `ANY` gets a minimal
   HINFO (RFC 8482), non-QUERY opcodes get NOTIMP and EDNS versions above 0 get BADVERS. RD and the opcode are echoed.
-- Best-effort ECH: for Cloudflare-hosted names the HTTPS answer gets Cloudflare's shared `ech` key (`src/ech.ts`). Not done for queries with DO, as the replaced record would carry no signature.
+- Best-effort ECH: for Cloudflare-hosted names the HTTPS answer gets Cloudflare's shared `ech` key (`src/ech.ts`); the Cloudflare IPv4 ranges it uses to recognise those names are downloaded from https://www.cloudflare.com/ips-v4 by `npm run build-lists` (the build fails if that fails), so the daily rebuild keeps them current. Not done for queries with DO, as the replaced record would carry no signature.
 
 ## Standards extras
 

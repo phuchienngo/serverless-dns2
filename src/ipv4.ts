@@ -20,3 +20,20 @@ export function inBlocks(a: ArrayLike<number>, blocks: Ipv4Block[]): boolean {
     return (n & mask) >>> 0 === (toNumber(base) & mask) >>> 0;
   });
 }
+
+/**
+ * @param cidrs Ranges such as `173.245.48.0/20`.
+ * @throws If one is not a valid IPv4 range.
+ */
+export function parseCidrs(cidrs: string[]): Ipv4Block[] {
+  return cidrs.map(cidr => {
+    const match =
+      /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\/(\d{1,2})$/.exec(cidr);
+    const address = match?.slice(1, 5).map(Number);
+    const prefix = Number(match?.[5]);
+    if (!address || address.some(b => b > 255) || prefix > 32) {
+      throw new Error(`not an IPv4 range: ${cidr}`);
+    }
+    return [address, prefix];
+  });
+}

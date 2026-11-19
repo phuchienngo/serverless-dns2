@@ -5,7 +5,7 @@
  * Cloudflare and, if so, answer with an HTTPS record carrying that key.
  */
 
-import {CLOUDFLARE_V4, ECH_FRONT_DOMAIN} from './config.js';
+import {ECH_FRONT_DOMAIN} from './config.js';
 import {
   ALPN_HTTP,
   RCODE_NOERROR,
@@ -27,6 +27,7 @@ import {
   svcbRdata,
   u16,
 } from './dns.js';
+import {inBlocks, type Ipv4Block} from './ipv4.js';
 import type {Question, Result} from './types.js';
 
 const ECH_CONFIG_TTL_MS = 3600 * 1000;
@@ -35,21 +36,8 @@ const SYNTHETIC_TTL = 300;
 /** Asks the upstream resolver; supplied by resolve.ts to avoid a cycle. */
 export type Ask = (wire: Uint8Array) => Promise<Uint8Array>;
 
-function toInt(bytes: ArrayLike<number>): number {
-  return (
-    ((bytes[0] << 24) | (bytes[1] << 16) | (bytes[2] << 8) | bytes[3]) >>> 0
-  );
-}
-
-const RANGES = CLOUDFLARE_V4.map(([base, bits]) => ({
-  base: toInt(base.split('.').map(Number)),
-  mask: bits === 0 ? 0 : (~0 << (32 - bits)) >>> 0,
-}));
-
-function isCloudflare(ip: ArrayLike<number>): boolean {
-  const n = toInt(ip);
-  return RANGES.some(r => (n & r.mask) >>> 0 === r.base);
-}
+/** Cloudflare's IPv4 ranges; null if they cannot be had. */
+export type Ranges = () => Promise<Ipv4Block[] | null>;
 
 /**
  * @return The value of SvcParam `key` of an HTTPS record's RDATA, or null.
@@ -111,15 +99,22 @@ function getEchConfig(ask: Ask): Promise<Uint8Array | null> {
 async function behindCloudflare(
   name: string,
   ecs: number[] | null,
-  ask: Ask
+  ask: Ask,
+  ranges: Promise<Ipv4Block[] | null>
 ): Promise<boolean> {
   const question = [...encodeName(name), ...u16(TYPE_A), 0, 1];
-  const resp = await ask(buildQuery(question, ecs));
-  return parseAnswers(resp).some(
-    a =>
-      a.type === TYPE_A &&
-      a.length === 4 &&
-      isCloudflare(resp.subarray(a.data, a.data + 4))
+  const [resp, blocks] = await Promise.all([
+    ask(buildQuery(question, ecs)),
+    ranges,
+  ]);
+  return (
+    !!blocks &&
+    parseAnswers(resp).some(
+      a =>
+        a.type === TYPE_A &&
+        a.length === 4 &&
+        inBlocks(resp.subarray(a.data, a.data + 4), blocks)
+    )
   );
 }
 
@@ -130,29 +125,34 @@ async function behindCloudflare(
 export interface EchProbe {
   cloudflare: Promise<boolean>;
   config: Promise<Uint8Array | null>;
+  ranges: Promise<Ipv4Block[] | null>;
 }
 
 /**
  * Starts the lookups addEch may need: is the name on Cloudflare (an A query),
- * and the ECH key (usually already memoized).
+ * the ECH key (usually already memoized) and Cloudflare's ranges (loaded
+ * only for an HTTPS query).
  * @return null if `q` is not an HTTPS query.
  */
 export function startEchProbe(
   q: Question,
   ecs: number[] | null,
-  ask: Ask
+  ask: Ask,
+  ranges: Ranges
 ): EchProbe | null {
   if (q.type !== TYPE_HTTPS) {
     return null;
   }
+  const loaded = ranges().catch(() => null);
   return {
-    cloudflare: behindCloudflare(q.name, ecs, ask).catch(() => false),
+    cloudflare: behindCloudflare(q.name, ecs, ask, loaded).catch(() => false),
     config: getEchConfig(ask).catch(() => null),
+    ranges: loaded,
   };
 }
 
 /**
- * Replaces the HTTPS answer with one carrying ECH when `result` has none and the
+ * Adds ECH the HTTPS answer with one carrying ECH when `result` has none and the
  * name is served by Cloudflare. The IPv4 hints of the answer, if it has any,
  * tell whether the name is on Cloudflare; otherwise the probe's A query does.
  * Returns `result` unchanged otherwise, or if anything fails.
@@ -166,19 +166,23 @@ export async function addEch(
     return result;
   }
   try {
+    const blocks = await probe.ranges;
+    if (!blocks) {
+      return result;
+    }
     let hinted: boolean | null = null;
-    for (const a of parseAnswers(result.body)) {
-      if (a.type !== TYPE_HTTPS) {
-        continue;
-      }
-      const rdata = a.data;
-      const end = rdata + a.length;
-      if (svcParam(result.body, rdata, end, SVCPARAM_ECH)) {
+    const records = parseAnswers(result.body).filter(
+      a => a.type === TYPE_HTTPS
+    );
+    for (const a of records) {
+      const end = a.data + a.length;
+      if (svcParam(result.body, a.data, end, SVCPARAM_ECH)) {
         return result; // Already has ECH.
       }
-      const hints = svcParam(result.body, rdata, end, SVCPARAM_IPV4HINT);
+      const hints = svcParam(result.body, a.data, end, SVCPARAM_IPV4HINT);
       for (let i = 0; hints && i + 4 <= hints.length; i += 4) {
-        hinted = (hinted ?? false) || isCloudflare(hints.subarray(i, i + 4));
+        hinted =
+          (hinted ?? false) || inBlocks(hints.subarray(i, i + 4), blocks);
       }
     }
     if (!(hinted ?? (await probe.cloudflare))) {

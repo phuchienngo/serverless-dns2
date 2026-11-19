@@ -85,24 +85,9 @@ export const BLOCK_REBINDING = true;
 export const CNAME_UNCLOAK = true;
 
 /**
- * Cloudflare's published IPv4 ranges (https://www.cloudflare.com/ips-v4):
- * [first address, prefix length]. Used by ech.ts to tell Cloudflare-hosted
- * names; check them against that list now and then.
+ * Cloudflare's published IPv4 ranges: `npm run build-lists` downloads them
+ * (the build fails if it cannot) into this static asset, and ech.ts reads it
+ * to tell Cloudflare-hosted names (see cloudflare-ips.ts).
  */
-export const CLOUDFLARE_V4: Array<[string, number]> = [
-  ['173.245.48.0', 20],
-  ['103.21.244.0', 22],
-  ['103.22.200.0', 22],
-  ['103.31.4.0', 22],
-  ['141.101.64.0', 18],
-  ['108.162.192.0', 18],
-  ['190.93.240.0', 20],
-  ['188.114.96.0', 20],
-  ['197.234.240.0', 22],
-  ['198.41.128.0', 17],
-  ['162.158.0.0', 15],
-  ['104.16.0.0', 13],
-  ['104.24.0.0', 14],
-  ['172.64.0.0', 13],
-  ['131.0.72.0', 22],
-];
+export const CLOUDFLARE_IPS_URL = 'https://www.cloudflare.com/ips-v4';
+export const CLOUDFLARE_IPS_PATH = '/cloudflare-ips.json';

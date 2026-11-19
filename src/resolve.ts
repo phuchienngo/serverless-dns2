@@ -33,6 +33,7 @@ import {
 } from './dns.js';
 import {cookieOption} from './cookie.js';
 import {withDns64} from './dns64.js';
+import {getCloudflareRanges} from './cloudflare-ips.js';
 import {addEch, startEchProbe} from './ech.js';
 import {makeEcs} from './ecs.js';
 import {ddrAnswer, isDdr, localAnswer, typeAnswer} from './local.js';
@@ -188,7 +189,12 @@ async function answer(q: Question, options: ResolveOptions): Promise<Result> {
       // validates DNSSEC (DO) would reject; give those the real record.
       const probe = flags.dnssec
         ? null
-        : startEchProbe(q, ecs, wire => forward(env, wire));
+        : startEchProbe(
+            q,
+            ecs,
+            wire => forward(env, wire),
+            () => getCloudflareRanges(env, host)
+          );
       return addEch(await askUpstream(q, env, ecs, flags), q, probe);
     });
     store(cache, key, result, waitUntil);

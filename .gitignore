@@ -9,3 +9,4 @@ node_modules/
 # Built by `npm run build-lists`
 public/blocklist.bin
 public/rules.json
+public/cloudflare-ips.json
