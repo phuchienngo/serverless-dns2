@@ -60,16 +60,12 @@ export const BLOCK_ANY = true;
 /** Name whose HTTPS record carries Cloudflare's shared ECH key. */
 export const ECH_FRONT_DOMAIN = 'cloudflare-ech.com';
 
-/** Domain blocklist built by `bun run build-lists` (see blocklist.ts). */
-export const BLOCKLIST_PATH = '/blocklist.bin';
 /**
  * Build time: a name that is not listed is wrongly blocked with a probability
  * of about 2^-this per suffix looked up. Each extra bit costs about one more
  * bit per listed domain in the file.
  */
 export const BLOCKLIST_PRECISION_BITS = 20;
-/** Regex block/allow rules built from blocklists.yaml (see regexlist.ts). */
-export const RULES_PATH = '/rules.json';
 
 /**
  * DNS rebinding protection: a name whose answer holds a private, loopback or
@@ -84,10 +80,5 @@ export const BLOCK_REBINDING = true;
  */
 export const CNAME_UNCLOAK = true;
 
-/**
- * Cloudflare's published IPv4 ranges: `bun run build-lists` downloads them
- * (the build fails if it cannot) into this static asset, and ech.ts reads it
- * to tell Cloudflare-hosted names (see cloudflare-ips.ts).
- */
+/** Cloudflare's published IPv4 ranges, which `bun run build-lists` downloads (see cloudflare-ips.ts). */
 export const CLOUDFLARE_IPS_URL = 'https://www.cloudflare.com/ips-v4';
-export const CLOUDFLARE_IPS_PATH = '/cloudflare-ips.json';

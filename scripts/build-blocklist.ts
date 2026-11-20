@@ -1,5 +1,5 @@
 /**
- * Builds public/blocklist.bin from blocklists.yaml.
+ * Builds build/blocklist.bin from blocklists.yaml.
  * Usage: bun scripts/build-blocklist.ts [config.yaml] [out.bin]
  */
 
@@ -34,7 +34,7 @@ async function readSource(source: string): Promise<string> {
 }
 
 async function main() {
-  const [configPath = 'blocklists.yaml', outPath = 'public/blocklist.bin'] =
+  const [configPath = 'blocklists.yaml', outPath = 'build/blocklist.bin'] =
     process.argv.slice(2);
   const config: Config = parse(await readFile(configPath, 'utf8')) ?? {};
 

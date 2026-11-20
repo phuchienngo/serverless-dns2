@@ -151,7 +151,7 @@ export function littleEndianWords(
  */
 export function decodeBlockset(buffer: ArrayBuffer): BlockSet {
   const file = littleEndianWords(buffer);
-  // A missing asset may be answered with index.html; old assets are invalid.
+  // Files of an older format are invalid.
   if (file.length < HEADER_WORDS || file[0] !== MAGIC) {
     throw new Error('not a blocklist');
   }

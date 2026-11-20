@@ -8,6 +8,7 @@ import {afterEach, beforeEach, describe, mock, test} from 'node:test';
 import {ECH_FRONT_DOMAIN} from '../src/config.js';
 import {parseQuestion} from '../src/query.js';
 import {handle} from '../src/handlers.js';
+import {loadCloudflareRanges} from '../src/cloudflare-ips.js';
 import {resolve} from '../src/resolve.js';
 import {
   T,
@@ -807,15 +808,11 @@ describe('serve-stale (RFC 8767)', () => {
 describe('best-effort ECH for Cloudflare-hosted names', () => {
   const ECH_CONFIG = [0, 0x45, 0xfe, 0x0d, 1, 2, 3, 4];
 
-  /** What the build writes to cloudflare-ips.json, served as an asset. */
-  const assets = (status = 200, v4 = ['104.16.0.0/13', '172.64.0.0/13']) => ({
-    fetch: async () =>
-      new Response(JSON.stringify({v4}), {status}) as unknown as Response,
-  });
-  const withRanges = (extra: Record<string, unknown> = {}) => ({
-    env: {ASSETS: assets()},
-    ...extra,
-  });
+  /** Loads what the build writes to cloudflare-ips.json. */
+  const withRanges = (extra: Record<string, unknown> = {}) => {
+    loadCloudflareRanges(['104.16.0.0/13', '172.64.0.0/13']);
+    return extra;
+  };
 
   /** An upstream where `cf*` names sit on Cloudflare and have no HTTPS record. */
   function cloudflareUpstream(
@@ -962,57 +959,10 @@ describe('best-effort ECH for Cloudflare-hosted names', () => {
     );
   });
 
-  test('without the ranges (no asset, bad status or bad content) the answer stays as it is', async () => {
-    for (const env of [
-      {},
-      {ASSETS: assets(404)},
-      {ASSETS: assets(200, ['not a range'])},
-      {ASSETS: assets(200, [])},
-    ]) {
-      resetState();
-      cloudflareUpstream();
-      const {msg} = await ask('cf-none.example.com', T.HTTPS, {}, {env});
-      assert.equal(msg.answer.length, 0);
-      upstream.restore();
-    }
-  });
-
-  test('the ranges are loaded once, and a failed load is not repeated at once', async () => {
+  test('without any ranges the answer stays as it is', async () => {
     cloudflareUpstream();
-    let loads = 0;
-    const env = {
-      ASSETS: {
-        fetch: async (url: string) => {
-          if (!String(url).includes('cloudflare-ips')) {
-            return new Response('', {status: 404}) as unknown as Response;
-          }
-          loads++;
-          return new Response(
-            JSON.stringify({v4: ['104.16.0.0/13']})
-          ) as unknown as Response;
-        },
-      },
-    };
-    await ask('cf-one.example.com', T.HTTPS, {}, {env});
-    await ask('cf-two.example.com', T.HTTPS, {}, {env});
-    assert.equal(loads, 1);
-    resetState();
-    cloudflareUpstream();
-    let failed = 0;
-    const broken = {
-      ASSETS: {
-        fetch: async (url: string) => {
-          if (!String(url).includes('cloudflare-ips')) {
-            return new Response('', {status: 404}) as unknown as Response;
-          }
-          failed++;
-          throw new Error('down');
-        },
-      },
-    };
-    await ask('cf-three.example.com', T.HTTPS, {}, {env: broken});
-    await ask('cf-four.example.com', T.HTTPS, {}, {env: broken});
-    assert.equal(failed, 1);
+    const {msg} = await ask('cf-none.example.com', T.HTTPS);
+    assert.equal(msg.answer.length, 0);
   });
 });
 

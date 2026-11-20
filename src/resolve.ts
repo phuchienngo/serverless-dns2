@@ -5,7 +5,6 @@
 
 import {lookupLocal, lookupShared, store} from './cache.js';
 import {blockReason, nxdomain, screen} from './blocking.js';
-import {getBlocklist, isReady} from './blocklist.js';
 import {
   EDE_NETWORK_ERROR,
   EDE_STALE_ANSWER,
@@ -155,7 +154,7 @@ async function resolveQuestion(
   q: Question,
   options: ResolveOptions
 ): Promise<Result> {
-  const {env, host} = options;
+  const {host} = options;
 
   const special = localAnswer(q, host);
   if (special) {
@@ -165,19 +164,8 @@ async function resolveQuestion(
     return ddrResult(q, options);
   }
 
-  if (isReady()) {
-    const reason = blockReason(q.name);
-    return reason ? nxdomain(q, reason) : screen(q, await answer(q, options));
-  }
-
-  // This isolate has not loaded the blocklist yet. Start answering while it
-  // loads, and discard the answer if the name turns out to be listed.
-  const loading = getBlocklist(env, host, options.timing);
-  const answering = answer(q, options);
-  answering.catch(() => {}); // Its failure is reported if it is used below.
-  await loading;
   const reason = blockReason(q.name);
-  return reason ? nxdomain(q, reason) : screen(q, await answering);
+  return reason ? nxdomain(q, reason) : screen(q, await answer(q, options));
 }
 
 /**
@@ -206,7 +194,7 @@ async function answer(q: Question, options: ResolveOptions): Promise<Result> {
             q,
             ecs,
             wire => forward(env, wire),
-            () => getCloudflareRanges(env, host)
+            getCloudflareRanges
           );
       return addEch(await askUpstream(q, env, ecs, flags), q, probe);
     });

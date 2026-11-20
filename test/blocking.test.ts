@@ -1,11 +1,12 @@
 /**
  * Blocking: blocklist + regex rules + allow rules + CNAME uncloaking, with a
- * fake ASSETS binding serving a small blocklist (RFC 8914 EDE 15 on blocks).
- * The blocklist is cached per process, so this file loads one fixture only.
+ * small blocklist loaded in memory (RFC 8914 EDE 15 on blocks). The blocklist
+ * is kept per process, so this file loads one fixture only.
  */
 
 import assert from 'node:assert/strict';
 import {after, before, describe, test} from 'node:test';
+import {loadBlocklist} from '../src/blocklist.js';
 import {buildBlockset} from '../scripts/blocklist-lib.js';
 import {parseQuestion} from '../src/query.js';
 import {resolve} from '../src/resolve.js';
@@ -32,17 +33,13 @@ const rules = {
     '^rebind-allowed\\.',
   ],
 };
-const assets = {
-  async fetch(input: string) {
-    if (input.endsWith('/blocklist.bin')) {
-      return new Response(blockset);
-    }
-    if (input.endsWith('/rules.json')) {
-      return Response.json(rules);
-    }
-    return new Response('nope', {status: 404});
-  },
-};
+loadBlocklist(
+  blockset.buffer.slice(
+    blockset.byteOffset,
+    blockset.byteOffset + blockset.byteLength
+  ) as ArrayBuffer,
+  rules
+);
 
 let upstream: ReturnType<typeof mockUpstream>;
 let n = 0;
@@ -87,7 +84,7 @@ after(() => upstream.restore());
 async function ask(name: string, type = T.A, query: QueryOptions = {}) {
   const q = parseQuestion(makeQuery(name, type, query));
   const result = await resolve(q, {
-    env: {ASSETS: assets as never},
+    env: {},
     ip: null,
     host: 'dns.test',
   } as never);

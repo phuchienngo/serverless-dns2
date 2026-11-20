@@ -6,7 +6,7 @@
 
 Config: the only secret is the optional `COOKIE_SECRET` (see DNS Cookies below). The upstream DoH URL (`UPSTREAM`, optional `UPSTREAM_BACKUP`) and the other knobs are in `src/config.ts`.
 
-Layout: `src/` (TypeScript logic; `core.ts` is the gateway, `worker.ts` the Workers entry point that routes `/dns-query` and `/resolve`; the rest of `public/` is served as static assets).
+Layout: `src/` (TypeScript logic; `core.ts` is the gateway, `worker.ts` the Workers entry point that routes `/dns-query` and `/resolve`; `public/` holds the static index page; the lists built by `bun run build-lists` go to `build/` and are bundled into the Worker).
 
 Dev (with [Bun](https://bun.sh)): `bun install`, `bun run check` (tsc), `bun test`, `bun run format` (Prettier, Google/gts style).
 
@@ -58,12 +58,12 @@ from data this gateway does not validate.
 ## Blocklist
 
 1. Put your sources in `blocklists.yaml` (`lists`, plus optional `allow` and `block` rules).
-2. `bun run build-lists` downloads them, keeps plain domains only and writes `public/blocklist.bin`
+2. `bun run build-lists` downloads them, keeps plain domains only and writes `build/blocklist.bin` (with `rules.json` and `cloudflare-ips.json` beside it)
    (a Ribbon filter: each domain's hash selects some of 64 consecutive slots of `BLOCKLIST_PRECISION_BITS` bits, and
    the build solves for slot values that XOR to the domain's fingerprint; about 20.02 bits per domain at 20 bits, where
    20 is the least possible; blocking a domain blocks its subdomains). The domains are split into shards of about
-   2048, each solved on its own with the fewest slots that work, which takes a minute or two. A cold isolate only
-   reads the small shard index. The slots are stored bit by bit in columns, so a lookup compares one fingerprint bit
+   2048, each solved on its own with the fewest slots that work, which takes a minute or two. The file is bundled with the Worker
+   and read in place: a new isolate only reads the small shard index. The slots are stored bit by bit in columns, so a lookup compares one fingerprint bit
    at a time and stops at the first that differs: about two steps for a name that is not listed.
    A name that is not listed is wrongly blocked with a probability of 2^-20 per suffix looked up (set
    `BLOCKLIST_PRECISION_BITS` in `src/config.ts`; listed names are never missed). If a source fails, nothing is
@@ -86,7 +86,7 @@ NXDOMAIN with EDE 15 ("dns rebinding"), so a web page cannot reach your router o
 and `::` (what blocklists answer) pass. Like uncloaking it is checked on every response, also cached ones. A name that must resolve to a
 private address (a service at home) goes in `allow:` in `blocklists.yaml`.
 
-Blocked names get NXDOMAIN. Each isolate loads the file once into memory.
+Blocked names get NXDOMAIN. The lists are part of the Worker bundle, so nothing is fetched at run time.
 
 ## Latency
 
@@ -94,7 +94,7 @@ Blocked names get NXDOMAIN. Each isolate loads the file once into memory.
 - The Cache API lookup and the upstream call run in parallel; the first answer wins and the upstream call always renews the cache.
 - Hedging: if the upstream has not answered after 100 ms the query is also sent on a second connection, to the optional
   `UPSTREAM_BACKUP` (a second DoH URL) or else to `UPSTREAM` again. The first answer wins.
-- `Server-Timing` on the `/resolve` and `/dns-query` responses shows `cache`, `upstream` and, on a cold isolate, `block`/`asset`.
+- `Server-Timing` on the `/resolve` and `/dns-query` responses shows how long the first answer took (`first`).
 
 Build and deploy: `.github/workflows/rebuild.yml` runs `bun run build-lists` and `wrangler deploy` on every push to
 `main`, every day (so the lists stay current) and from the Actions tab. Setup, once: a Cloudflare API token with the
