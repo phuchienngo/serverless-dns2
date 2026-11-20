@@ -72,20 +72,18 @@ function scale(x: number, n: number): number {
   return Math.floor((x * n) / 4294967296);
 }
 
+/**
+ * @return A 32-bit hash of the pair `(x, y)`; each `salt` gives another one.
+ */
+function mix(x: number, y: number, salt: number): number {
+  return fmix32(x ^ Math.imul(y + salt, 0x9e3779b1));
+}
+
 /*
  * A name's hash is two 32-bit words `(h0, h1)`. Everything a lookup needs is
- * derived from them below; the build uses the same functions.
+ * a `mix` of them, with salt 0 for what does not depend on the shard's seed
+ * and `4 * seed + 1` to `+ 3` for what does; the build uses the same functions.
  */
-
-/** The first word of the hash, from the running state `(a, b)` of `isBlocked`. */
-function mix0(a: number, b: number): number {
-  return fmix32(a ^ Math.imul(b, 0x9e3779b1));
-}
-
-/** The second word of the hash. */
-function mix1(b: number, h0: number): number {
-  return fmix32(b ^ h0);
-}
 
 /** The hash `[h0, h1]` of a domain, read from right to left. */
 export function hashDomain(name: string): [number, number] {
@@ -96,8 +94,8 @@ export function hashDomain(name: string): [number, number] {
     a = Math.imul(a ^ c, 0x01000193);
     b = Math.imul(b ^ c, 0x85ebca6b) ^ (b >>> 15);
   }
-  const h0 = mix0(a, b);
-  return [h0, mix1(b, h0)];
+  const h0 = mix(a, b, 0);
+  return [h0, mix(b, h0, 0)];
 }
 
 /** The shard a name belongs to. */
@@ -107,7 +105,7 @@ export function shardOf(h0: number, shards: number): number {
 
 /** What the name's slots must XOR to: bit `j` for bit `j` of the slots. */
 export function fingerprint(h0: number, h1: number): number {
-  return fmix32(h1 + Math.imul(h0, 0xcc9e2d51));
+  return mix(h0, h1, 0);
 }
 
 /** The name's first slot in a shard of `slots` slots hashed with `seed`. */
@@ -117,20 +115,17 @@ export function startOf(
   seed: number,
   slots: number
 ): number {
-  const x = fmix32(
-    (h0 + Math.imul(h1, 0x1b873593)) ^ Math.imul(seed, 0x27d4eb2f)
-  );
-  return scale(x, slots - RIBBON_WIDTH + 1);
+  return scale(mix(h0, h1, 4 * seed + 1), slots - RIBBON_WIDTH + 1);
 }
 
 /** Coefficient bits 0 to 31 (bit 0 is always set), as a signed 32-bit number. */
-export function coefLow(h0: number, seed: number): number {
-  return fmix32(h0 ^ Math.imul(seed + 1, 0x9e3779b1)) | 1;
+export function coefLow(h0: number, h1: number, seed: number): number {
+  return mix(h0, h1, 4 * seed + 2) | 1;
 }
 
 /** Coefficient bits 32 to 63, as a signed 32-bit number. */
-export function coefHigh(h1: number, seed: number): number {
-  return fmix32(h1 ^ Math.imul(seed + 1, 0x85ebca77)) | 0;
+export function coefHigh(h0: number, h1: number, seed: number): number {
+  return mix(h0, h1, 4 * seed + 3) | 0;
 }
 
 /**
@@ -191,25 +186,27 @@ export function decodeBlockset(buffer: ArrayBuffer): BlockSet {
 
 /** Whether the set holds the name whose running hash state is `(a, b)`. */
 function contains(set: BlockSet, a: number, b: number): boolean {
-  const h0 = mix0(a, b);
+  const h0 = mix(a, b, 0);
   const shard = shardOf(h0, set.shards);
   const base = set.starts[shard];
   const slots = set.starts[shard + 1] - base;
   if (slots === 0) {
     return false;
   }
-  const h1 = mix1(b, h0);
+  const h1 = mix(b, h0, 0);
   const seed = set.seeds[shard];
   const first = base + startOf(h0, h1, seed, slots);
-  // The coefficients as masks over the blocks they span: three, or two if
-  // they start at a block (then the third mask is 0, on the second block).
+  // The coefficients as masks over the three blocks they span. Shifted right
+  // in two steps, as a shift by 32 would be one by 0.
   const shift = first & 31;
-  const low = coefLow(h0, seed);
-  const high = coefHigh(h1, seed);
+  const low = coefLow(h0, h1, seed);
+  const high = coefHigh(h0, h1, seed);
   const m0 = low << shift;
-  const m1 = shift === 0 ? high : (low >>> (32 - shift)) | (high << shift);
-  const m2 = shift === 0 ? 0 : high >>> (32 - shift);
+  const m1 = ((low >>> 1) >>> (31 - shift)) | (high << shift);
+  const m2 = (high >>> 1) >>> (31 - shift);
   const {bits, words} = set;
+  // Coefficients that start at a block span two: the third mask is 0, and is
+  // put on the second block, as the table may end there.
   const third = shift === 0 ? bits : 2 * bits;
   const sum = fingerprint(h0, h1);
   let at = (first >>> 5) * bits;

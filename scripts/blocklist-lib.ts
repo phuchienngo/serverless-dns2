@@ -52,7 +52,7 @@ export function parseDomain(line: string): string | null {
 /**
  * Seeds tried for a shard before it is given one more slot. More seeds find a
  * smaller file and take longer: 4096 saves 0.01 bit per domain for 4 times
- * the build time.
+ * the build time. The index holds a seed in 16 bits.
  */
 const SEEDS = 512;
 
@@ -78,8 +78,8 @@ function solve(
     const h0 = h0s[key];
     const h1 = h1s[key];
     let at = startOf(h0, h1, seed, slots);
-    let lo = coefLow(h0, seed);
-    let hi = coefHigh(h1, seed);
+    let lo = coefLow(h0, h1, seed);
+    let hi = coefHigh(h0, h1, seed);
     let sum = fingerprint(h0, h1);
     while (low[at] !== 0) {
       lo ^= low[at];
