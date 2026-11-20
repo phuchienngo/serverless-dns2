@@ -2,6 +2,10 @@
   "name": "serverless-dns2",
   "main": "src/worker.ts",
   "compatibility_date": "2026-11-01",
+  // Reachable only through the domain attached in the dashboard: no
+  // *.workers.dev address, for the Worker or for preview versions.
+  "workers_dev": false,
+  "preview_urls": false,
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
