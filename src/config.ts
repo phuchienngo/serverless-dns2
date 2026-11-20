@@ -9,7 +9,7 @@ export const MAX_DNS_PARAM = 700;
 /** How long to wait for the upstream resolver. */
 export const UPSTREAM_TIMEOUT_MS = 4000;
 /** Upstream DoH resolver, and an optional second one for hedged queries. */
-export const UPSTREAM = 'https://dns.google/dns-query';
+export const UPSTREAM = 'https://ayr25cp79f.cloudflare-gateway.com/dns-query';
 export const UPSTREAM_BACKUP = '';
 
 /** Answers kept in the isolate's memory, in front of the Cache API. */
