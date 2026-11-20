@@ -5,12 +5,14 @@
  */
 
 import {MAX_DNS_PARAM, MAX_QUERY} from './config.js';
-import {RECORD_TYPES, TYPE_NAPTR, TYPE_PTR} from './constants.js';
+import {RECORD_TYPES, TTL_UNCACHED, TYPE_NAPTR, TYPE_PTR} from './constants.js';
 import {makeQuestion, parseQuestion} from './query.js';
 import {clientEcs, parseEcsParam, reverseName} from './ecs.js';
 import {toJson} from './format.js';
+import {formErrorHeader} from './response.js';
 import {resolve, upstreamFailure} from './resolve.js';
 import type {Context, Question, ResolveOptions, Result} from './types.js';
+import {HEADER_BYTES} from './wire.js';
 
 function textResponse(
   message: string,
@@ -145,6 +147,14 @@ export async function handle(
   try {
     question = parseQuestion(wire);
   } catch {
+    if (
+      wire.length >= HEADER_BYTES &&
+      wire.length <= MAX_QUERY &&
+      wire[2] >> 3 === 0 &&
+      ((wire[4] << 8) | wire[5]) > 1
+    ) {
+      return wireResponse({body: formErrorHeader(wire), ttl: TTL_UNCACHED});
+    }
     return textResponse('bad dns message', 400);
   }
 

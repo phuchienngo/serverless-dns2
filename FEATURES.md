@@ -9,6 +9,7 @@ Every feature, the standard it follows, where it lives and which test covers it.
 | Feature | Standard | Code | Tests |
 |---|---|---|---|
 | DoH GET/POST, status codes (405/413/414/415/400) | RFC 8484 | `handlers.ts` | `handlers.test.ts` |
+| `QUERY` with `QDCOUNT > 1` gets DNS FORMERR | RFC 9619 | `handlers.ts`, `response.ts` | `handlers.test.ts` |
 | JSON API `/resolve` (name, type, do, cd, ct, subnet, PTR from IP) | Google DoH JSON | `handlers.ts`, `format.ts` | `handlers.test.ts`, `format.test.ts` |
 | Message parsing and building (names up to 255 octets, CD echoed), case kept (0x20) | RFC 1035, 4343 | `wire.ts`, `query.ts`, `response.ts` | `dns.test.ts` |
 | EDNS0: OPT only if the query had one, DO echoed, BADVERS, extended rcode | RFC 6891 | `query.ts`, `response.ts`, `resolve.ts` | `dns.test.ts`, `resolve.test.ts` |

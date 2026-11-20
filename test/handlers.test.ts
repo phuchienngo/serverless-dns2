@@ -2,7 +2,7 @@
 
 import assert from 'node:assert/strict';
 import {afterEach, beforeEach, describe, test} from 'node:test';
-import {RCODE_BADVERS} from '../src/constants.js';
+import {RCODE_BADVERS, RCODE_FORMERR} from '../src/constants.js';
 import {handle, handleJson} from '../src/handlers.js';
 import {
   T,
@@ -121,6 +121,34 @@ describe('/dns-query (RFC 8484)', () => {
       (await get(`/dns-query?dns=${'A'.repeat(20000)}`)).status,
       414
     );
+  });
+
+  test('a QUERY with two questions returns DNS FORMERR over GET and POST', async () => {
+    const first = makeQuery('first.example.com', T.A, {
+      id: 0x1234,
+      cd: true,
+      edns: false,
+    });
+    const second = makeQuery('second.example.com', T.AAAA, {edns: false});
+    const wire = Uint8Array.from([...first, ...second.subarray(12)]);
+    new DataView(wire.buffer).setUint16(4, 2);
+
+    for (const res of [
+      await get(`/dns-query?dns=${b64url(wire)}`),
+      await post(wire),
+    ]) {
+      assert.equal(res.status, 200);
+      assert.equal(res.headers.get('content-type'), 'application/dns-message');
+      assert.equal(res.headers.get('cache-control'), 'private, max-age=0');
+      const reply = parseMsg(new Uint8Array(await res.arrayBuffer()));
+      assert.equal(reply.id, 0x1234);
+      assert.equal(reply.qr, true);
+      assert.equal(reply.rd, true);
+      assert.equal(reply.cd, true);
+      assert.equal(reply.rcode, RCODE_FORMERR);
+      assert.equal(reply.size, 12);
+    }
+    assert.equal(upstream.calls.length, 0);
   });
 
   test('the JSON API also answers on /dns-query?name=', async () => {

@@ -7,6 +7,7 @@ import {
   CLASS_IN,
   OPTION_EDE,
   OPTION_PADDING,
+  RCODE_FORMERR,
   TYPE_CNAME,
   TYPE_OPT,
   TYPE_SOA,
@@ -85,6 +86,15 @@ export function respond(
   additional: number[][] = []
 ): Uint8Array {
   return build(q, rcode, records, [], ede, additional);
+}
+
+export function formErrorHeader(query: Uint8Array): Uint8Array {
+  const header = new Uint8Array(HEADER_BYTES);
+  header[0] = query[0];
+  header[1] = query[1];
+  header[2] = FLAG_QR_OR_RA | (query[2] & FLAG_RD);
+  header[3] = FLAG_QR_OR_RA | (query[3] & FLAG_CD) | RCODE_FORMERR;
+  return header;
 }
 
 /**
