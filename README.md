@@ -6,7 +6,7 @@
 
 Config: the only secret is the optional `COOKIE_SECRET` (see DNS Cookies below). The upstream DoH URL (`UPSTREAM`, optional `UPSTREAM_BACKUP`) and the other knobs are in `src/config.ts`.
 
-`src/worker.ts` routes `/dns-query` and `/resolve` to `src/handlers.ts`. `public/` holds the static index page. `bun run build-lists` writes the lists to `build/` for bundling into the Worker.
+`src/worker.ts` routes `/dns-query` and `/resolve` to `src/handlers.ts` and returns HTTP 404 for other paths. `bun run build-lists` writes the lists to `build/` for bundling into the Worker.
 
 Dev (with [Bun](https://bun.sh)): `bun install`, `bun run check` (tsc), `bun test`, `bun run format` (Prettier, Google/gts style).
 
@@ -44,7 +44,7 @@ Three optional features, none of which touches the caches or their TTLs.
   how clients discover it (RFC 7050); and a PTR for an address inside the prefix, which the upstream cannot answer, gets a
   CNAME to the reverse name of the embedded IPv4 address followed by that name's PTR records (RFC 6147 5.3.1).
 - **Resolver information** (RFC 9606): `RESINFO` for this gateway's host name answers locally with `exterr=3,15,19,23`
-  (the Extended DNS Errors it produces) and `infourl=https://<host>/`. Clients that found the gateway through DDR can ask for it.
+  (the Extended DNS Errors it produces). Clients that found the gateway through DDR can ask for it.
 - **DNS Cookies** (RFC 7873): set the secret with `bunx wrangler secret put COOKIE_SECRET`
   (for example from `openssl rand -hex 32`) and redeploy. A query with a Cookie option then gets the client cookie back with
   a server cookie (first 8 bytes of HMAC-SHA256 of the client cookie and the client IP). Cookies are never enforced, since HTTPS

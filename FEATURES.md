@@ -28,7 +28,7 @@ Every feature, the standard it follows, where it lives and which test covers it.
 | NOTIMP for other opcodes, AXFR/IXFR/MAILB/MAILA; FORMERR for QTYPE 0/OPT/TKEY/TSIG; REFUSED for classes other than IN | RFC 1035, 5936, 6895 | `resolve.ts` | `resolve.test.ts` |
 | FORMERR for an invalid OPT (two OPTs, non-root owner, bad length) | RFC 6891 6.1.1 | `query.ts`, `resolve.ts` | `dns.test.ts`, `resolve.test.ts` |
 | DDR (`_dns.resolver.arpa` SVCB, with the host's A/AAAA in additional); other `resolver.arpa` names get NODATA | RFC 9462, 9460 | `resolve.ts` | `resolve.test.ts` |
-| Resolver information: RESINFO for the gateway host (`exterr`, `infourl`) | RFC 9606 | `local.ts` | `local.test.ts`, `resolve.test.ts` |
+| Resolver information: RESINFO for the gateway host (`exterr`) | RFC 9606 | `local.ts` | `local.test.ts`, `resolve.test.ts` |
 | DNS64, on request with `dns64=1` (prefix in `config.ts`; not for DO without CD, nor private addresses): AAAA from A, PTR for the prefix, `ipv4only.arpa` | RFC 6147, 6052, 7050 | `dns64.ts`, `resolve.ts` | `dns64.test.ts`, `resolve.test.ts` |
 | DNS Cookies, only with the `COOKIE_SECRET` setting; never enforced (HTTPS already stops spoofing); wrong length is FORMERR | RFC 7873 | `cookie.ts`, `query.ts` | `cookie.test.ts`, `dns.test.ts`, `resolve.test.ts` |
 | Best-effort ECH key for Cloudflare names (skipped with DO) | RFC 9460 (ECH draft) | `ech.ts`, `cloudflare-ips.ts` | `resolve.test.ts` |

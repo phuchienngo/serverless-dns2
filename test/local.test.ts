@@ -59,10 +59,7 @@ describe('localAnswer', () => {
         Buffer.from(rdata.subarray(i + 1, i + 1 + rdata[i])).toString()
       );
     }
-    assert.deepEqual(keys, [
-      'exterr=3,15,19,23',
-      'infourl=https://dns.example.com/',
-    ]);
+    assert.deepEqual(keys, ['exterr=3,15,19,23']);
     assert.equal(answer.ttl, 300);
     assert.equal(
       localAnswer(q('other.example.com', T.RESINFO), 'dns.example.com'),

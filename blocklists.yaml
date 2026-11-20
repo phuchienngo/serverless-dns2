@@ -6,8 +6,7 @@ allow: []
 
 block:
   - /^ad([sxv]?[0-9]*|system)[_.-][^.]+\.|[_.-]ad([sxv]?[0-9]*|system)[_.-]/
-  - /^(.+[_.-])?adse?rv(er?|ice)?s?[0-9]*[_.-]/
-  - /^(.+[_.-])?telemetry[_.-]/
+  - /^(.+[_.-])?(?:adse?rv(er?|ice)?s?[0-9]*|telemetry)[_.-]/
   - /^adim(age|g)s?[0-9]*[_.-]/
   - /^adtrack(er|ing)?[0-9]*[_.-]/
   - /^advert(s|is(ing|ements?))?[0-9]*[_.-]/

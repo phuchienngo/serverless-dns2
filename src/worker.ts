@@ -1,8 +1,4 @@
-/**
- * @fileoverview Cloudflare Workers entry point: sends `/dns-query` and
- * `/resolve` to the gateway. Everything else is served from the static assets
- * (see `assets` in wrangler.jsonc), so this is only run for those two paths.
- */
+/** @fileoverview Cloudflare Workers entry point for `/dns-query` and `/resolve`. */
 
 import blocklist from '../build/blocklist.bin';
 import cloudflareIps from '../build/cloudflare-ips.json';
@@ -36,8 +32,6 @@ export default {
     if (path === '/resolve') {
       return handleJson(request, context);
     }
-    return env.ASSETS
-      ? env.ASSETS.fetch(request)
-      : new Response('not found', {status: 404});
+    return new Response('not found', {status: 404});
   },
 };

@@ -56,17 +56,13 @@ export function ddrAnswer(
   return respond(q, RCODE_NOERROR, [record], undefined, hints);
 }
 
-/**
- * Resolver information (RFC 9606): the RESINFO record of this gateway's host,
- * listing the Extended DNS Errors it produces and a page about it.
- */
-function resinfo(q: Question, host: string): Result {
-  const keys = [`exterr=${EDE_PRODUCED.join(',')}`, `infourl=https://${host}/`];
-  const rdata = keys.flatMap(key => {
-    const bytes = utf8(key);
-    return [bytes.length, ...bytes];
-  });
-  const record = makeRecord(TYPE_RESINFO, TTL_DISCOVERY, rdata);
+/** Resolver information (RFC 9606) lists the Extended DNS Errors we produce. */
+function resinfo(q: Question): Result {
+  const exterr = utf8(`exterr=${EDE_PRODUCED.join(',')}`);
+  const record = makeRecord(TYPE_RESINFO, TTL_DISCOVERY, [
+    exterr.length,
+    ...exterr,
+  ]);
   return {body: respond(q, RCODE_NOERROR, [record]), ttl: TTL_DISCOVERY};
 }
 
@@ -139,7 +135,7 @@ export function localAnswer(q: Question, host: string): Result | null {
     return null; // Needs the resolver's addresses: see resolve.ts.
   }
   if (q.type === TYPE_RESINFO && q.name === host) {
-    return resinfo(q, host);
+    return resinfo(q);
   }
   if (q.name === 'resolver.arpa' || q.name.endsWith('.resolver.arpa')) {
     // RFC 9462: reserved for DDR; never forwarded.

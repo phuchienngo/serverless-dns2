@@ -971,7 +971,7 @@ describe('best-effort ECH for Cloudflare-hosted names', () => {
 });
 
 describe('resolver information (RFC 9606)', () => {
-  test('RESINFO for the gateway host lists the EDE codes and an info page', async () => {
+  test('RESINFO for the gateway host lists the EDE codes', async () => {
     const {msg} = await ask('dns.test', T.RESINFO);
     assert.equal(msg.rcode, 0);
     assert.equal(msg.answer[0].type, T.RESINFO);
@@ -982,10 +982,7 @@ describe('resolver information (RFC 9606)', () => {
         Buffer.from(rdata.subarray(i + 1, i + 1 + rdata[i])).toString()
       );
     }
-    assert.deepEqual(strings, [
-      'exterr=3,15,19,23',
-      'infourl=https://dns.test/',
-    ]);
+    assert.deepEqual(strings, ['exterr=3,15,19,23']);
     assert.equal(upstream.calls.length, 0);
   });
 
