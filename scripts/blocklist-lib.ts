@@ -4,16 +4,20 @@
  */
 
 import {
-  BLOCK_BITS,
-  type BlockSet,
-  HEADER_BYTES,
-  INDEX_ENTRY_BYTES,
-  GapReader,
+  HEADER_WORDS,
   MAGIC,
-  blockLength,
+  MAX_SHARD_SLOTS,
+  RIBBON_WIDTH,
+  SHARD_KEYS,
+  coefHigh,
+  coefLow,
   decodeBlockset,
+  fingerprint,
   hashDomain,
   isBlocked,
+  littleEndianWords,
+  shardOf,
+  startOf,
 } from '../src/blockset.js';
 
 const DOMAIN =
@@ -46,35 +50,112 @@ export function parseDomain(line: string): string | null {
 }
 
 /**
- * Decodes every hash of a blocklist (a lookup never does).
- * @throws If the stream does not hold exactly what the index says.
+ * Seeds tried for a shard before it is given one more slot. More seeds find a
+ * smaller file and take longer: 4096 saves 0.01 bit per domain for 4 times
+ * the build time.
  */
-export function decodeAll(set: BlockSet): Float64Array {
-  const values = new Float64Array(set.count);
-  const gaps = new GapReader(set.stream, set.k, 0);
-  for (let b = 0; b < set.firsts.length; b++) {
-    const at = b * 2 ** set.blockBits;
-    if (set.offsets[b] !== gaps.pos) {
-      throw new Error('bad blocklist index');
+const SEEDS = 512;
+
+/**
+ * Solves one shard for one seed: finds slot values such that every name's
+ * selected slots XOR to its fingerprint.
+ * @return The slot values, or null if this seed has no solution.
+ */
+function solve(
+  h0s: number[],
+  h1s: number[],
+  bits: number,
+  seed: number,
+  slots: number
+): Uint32Array | null {
+  const mask = 2 ** bits - 1; // The bits of a slot that are stored.
+  // Row `i` of the system in echelon form: its coefficients start at slot `i`
+  // (bit 0, set if the row is used) and `sums[i]` is what they must XOR to.
+  const low = new Int32Array(slots);
+  const high = new Int32Array(slots);
+  const sums = new Uint32Array(slots);
+  for (let key = 0; key < h0s.length; key++) {
+    const h0 = h0s[key];
+    const h1 = h1s[key];
+    let at = startOf(h0, h1, seed, slots);
+    let lo = coefLow(h0, seed);
+    let hi = coefHigh(h1, seed);
+    let sum = fingerprint(h0, h1);
+    while (low[at] !== 0) {
+      lo ^= low[at];
+      hi ^= high[at];
+      sum ^= sums[at];
+      if (lo === 0 && hi === 0) {
+        break;
+      }
+      // Move to the next slot the row still uses.
+      while ((lo & 1) === 0) {
+        lo = (lo >>> 1) | (hi << 31);
+        hi >>>= 1;
+        at++;
+      }
     }
-    let value = set.firsts[b];
-    values[at] = value;
-    for (let i = 1; i < blockLength(set, b); i++) {
-      value += gaps.next();
-      values[at + i] = value;
+    if (lo !== 0) {
+      low[at] = lo;
+      high[at] = hi;
+      sums[at] = sum;
+    } else if ((sum & mask) !== 0) {
+      return null; // The other names already fix a different value.
     }
   }
-  if (gaps.pos > set.streamBits || set.streamBits - gaps.pos >= 8) {
-    throw new Error('bad blocklist length');
+
+  // Back substitution, from the last slot; a slot no row starts at stays 0.
+  const values = new Uint32Array(slots);
+  for (let at = slots - 1; at >= 0; at--) {
+    if (low[at] === 0) {
+      continue;
+    }
+    let value = sums[at];
+    for (let c = low[at] & ~1; c !== 0; c &= c - 1) {
+      value ^= values[at + 31 - Math.clz32(c & -c)];
+    }
+    for (let c = high[at]; c !== 0; c &= c - 1) {
+      value ^= values[at + 63 - Math.clz32(c & -c)];
+    }
+    values[at] = value;
   }
   return values;
 }
 
 /**
- * Encodes the domains as a Golomb-coded set (see src/blockset.ts) and checks
- * that every domain can be found in the decoded result.
+ * Solves one shard: starts with one slot per name, the least possible, and
+ * adds one until some seed has a solution.
  */
-export function buildBlockset(domains: Set<string>, k: number): Uint8Array {
+function solveShard(
+  h0s: number[],
+  h1s: number[],
+  bits: number
+): {seed: number; values: Uint32Array} {
+  const n = h0s.length;
+  if (n === 0) {
+    return {seed: 0, values: new Uint32Array(0)};
+  }
+  for (let slots = Math.max(RIBBON_WIDTH, n); ; slots++) {
+    if (slots > MAX_SHARD_SLOTS) {
+      throw new Error('blocklist shard too large');
+    }
+    for (let seed = 0; seed < SEEDS; seed++) {
+      const values = solve(h0s, h1s, bits, seed, slots);
+      if (values) {
+        return {seed, values};
+      }
+    }
+  }
+}
+
+/**
+ * Encodes the domains as a Ribbon filter of `bits`-bit slots (see
+ * src/blockset.ts) and checks that every domain can be found in the result.
+ */
+export function buildBlockset(domains: Set<string>, bits: number): Uint8Array {
+  if (!Number.isInteger(bits) || bits < 0 || bits > 32) {
+    throw new Error(`precision must be 0 to 32 bits, not ${bits}`);
+  }
   const kept: string[] = [];
   for (const domain of domains) {
     let covered = false;
@@ -92,81 +173,44 @@ export function buildBlockset(domains: Set<string>, k: number): Uint8Array {
       kept.push(domain);
     }
   }
-  const bits = Math.ceil(Math.log2(Math.max(kept.length, 1))) + k;
-  if (bits > 53) {
-    throw new Error(`blocklist too large for ${k} precision bits`);
-  }
-  const values = [...new Set(kept.map(d => hashDomain(d, bits)))].sort(
-    (x, y) => x - y
-  );
 
-  const blockSize = 2 ** BLOCK_BITS;
-  const blocks = Math.ceil(values.length / blockSize);
-  const index = new Uint8Array(blocks * INDEX_ENTRY_BYTES);
-  const indexView = new DataView(index.buffer);
-  const stream: number[] = [];
-  let current = 0;
-  let filled = 0;
-  let streamBits = 0;
-  const put = (bit: number) => {
-    current = (current << 1) | bit;
-    streamBits++;
-    if (++filled === 8) {
-      stream.push(current);
-      current = 0;
-      filled = 0;
-    }
-  };
-  let prev = 0;
-  values.forEach((value, i) => {
-    if (i % blockSize === 0) {
-      const at = (i / blockSize) * INDEX_ENTRY_BYTES;
-      indexView.setUint32(at, value % 2 ** 32, true);
-      indexView.setUint32(at + 4, Math.floor(value / 2 ** 32), true);
-      indexView.setUint32(at + 8, streamBits, true);
-      prev = value;
-      return;
-    }
-    const gap = value - prev;
-    prev = value;
-    const quotient = Math.floor(gap / 2 ** k);
-    const remainder = gap - quotient * 2 ** k;
-    for (let q = 0; q < quotient; q++) {
-      put(1);
-    }
-    put(0);
-    for (let bit = k - 1; bit >= 0; bit--) {
-      put(Math.floor(remainder / 2 ** bit) % 2);
+  const shards = Math.max(1, Math.ceil(kept.length / SHARD_KEYS));
+  const h0s: number[][] = Array.from({length: shards}, () => []);
+  const h1s: number[][] = Array.from({length: shards}, () => []);
+  for (const domain of kept) {
+    const [h0, h1] = hashDomain(domain);
+    const shard = shardOf(h0, shards);
+    h0s[shard].push(h0);
+    h1s[shard].push(h1);
+  }
+  const solved = h0s.map((h0, shard) => solveShard(h0, h1s[shard], bits));
+  const slots = solved.reduce((sum, {values}) => sum + values.length, 0);
+
+  const tableStart = HEADER_WORDS + shards;
+  const file = new Uint32Array(tableStart + Math.ceil(slots / 32) * bits);
+  file.set([MAGIC, kept.length, bits, shards]);
+  let slot = 0;
+  solved.forEach(({seed, values}, shard) => {
+    file[HEADER_WORDS + shard] = values.length | (seed << 16);
+    for (const value of values) {
+      const at = tableStart + (slot >>> 5) * bits;
+      for (let j = 0; j < bits; j++) {
+        file[at + j] |= ((value >>> j) & 1) << (slot & 31);
+      }
+      slot++;
     }
   });
-  const used = streamBits;
-  while (filled !== 0) {
-    put(0);
-  }
-
-  const out = new Uint8Array(HEADER_BYTES + index.length + stream.length);
-  const view = new DataView(out.buffer);
-  view.setUint32(0, MAGIC, true);
-  view.setUint32(4, values.length, true);
-  out[8] = k;
-  out[9] = bits;
-  out[10] = BLOCK_BITS;
-  view.setUint32(11, used, true);
-  out.set(index, HEADER_BYTES);
-  out.set(stream, HEADER_BYTES + index.length);
+  const out = new Uint8Array(littleEndianWords(file.buffer).buffer);
 
   const decoded = decodeBlockset(out.buffer);
-  const all = decodeAll(decoded);
   if (
-    decoded.bits !== bits ||
-    all.length !== values.length ||
-    values.some((v, i) => all[i] !== v) ||
+    decoded.count !== kept.length ||
     kept.some(domain => !isBlocked(decoded, domain))
   ) {
     throw new Error('blocklist does not decode to what was encoded');
   }
   console.log(
-    `${kept.length} domains -> ${values.length} hashes of ${bits} bits`
+    `${kept.length} domains -> ${slots} slots of ${bits} bits in ${shards} shards`
   );
   return out;
 }

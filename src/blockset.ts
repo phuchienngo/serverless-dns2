@@ -1,65 +1,94 @@
 /**
- * @fileoverview The set of blocked domains, stored as a Golomb-coded set: each
- * domain is hashed to `bits` bits, the sorted hashes are stored as the gaps
- * between neighbours (Golomb-Rice coded). A query checks each suffix of the
- * name, so a blocked domain also blocks all of its subdomains.
+ * @fileoverview The set of blocked domains, stored as a Ribbon filter (Dillinger
+ * and Walzer, 2021). A query checks each suffix of the name, so a blocked
+ * domain also blocks all of its subdomains.
  *
- * Hashes are truncated to `bits = ceil(log2 count) + k`, so a name that is not
- * listed is wrongly found with a probability of about 2^-k per suffix. Listed
- * names are always found.
+ * The filter is a table of slots, each `bits` bits wide. A name's hash gives a
+ * start slot, 64 coefficient bits (the "ribbon", whose first bit is always 1)
+ * and a `bits`-bit fingerprint. The build solves a linear system over GF(2) so
+ * that, for every listed name, the XOR of the slots its coefficients select
+ * (bit `i` selects slot `start + i`) equals its fingerprint. A name that is
+ * not listed gets a random XOR, so it is wrongly found with a probability of
+ * 2^-bits per suffix. Listed names are always found.
  *
- * The hashes are split into blocks of `2 ** blockBits`, with an index, so that
- * a lookup decodes one block instead of the whole set: nothing is decoded when
- * the file is loaded, which matters in an isolate that starts cold.
+ * The names are split by hash into shards of about `SHARD_KEYS`, each with its
+ * own slots and hash seed: a small system needs fewer spare slots than a large
+ * one (here almost none), and the build retries one shard with another seed
+ * instead of everything.
  *
- * File layout (all integers little-endian):
- * - `MAGIC` (u32), `count` (u32), `k` (u8), `bits` (u8), `blockBits` (u8) and
- *   `streamBits` (u32), the length of the bit stream below.
- * - The index, one 12-byte entry per block: the block's first hash (low u32,
- *   high u32) and the bit offset in the stream where the rest of the block
- *   starts.
- * - The bit stream: for each hash that is not the first of its block, the gap
- *   to the previous one as `gap >> k` in unary (that many 1 bits, then a 0
- *   bit) followed by the low `k` bits of the gap. Bits are written most
- *   significant first and the last byte is padded with zeros.
+ * The slots are stored in columns: for each block of 32 slots, one word per
+ * bit of the slot. A lookup checks one bit of the fingerprint at a time, as
+ * the parity of three masked words, and stops at the first that differs: a
+ * name that is not listed takes two columns on average. Nothing is decoded
+ * when the file is loaded, which matters in an isolate that starts cold.
+ *
+ * File layout, as little-endian 32-bit words (read in place on a little-endian
+ * host; a big-endian host swaps a copy once, when the file is loaded):
+ * - `MAGIC`, `count`, `bits` and `shards`.
+ * - The index, one word per shard: its number of slots in the low 16 bits (0
+ *   for an empty shard, else at least `RIBBON_WIDTH`) and its hash seed in the
+ *   high 16 bits.
+ * - The slots of all shards in order, numbered from 0: for each block of 32
+ *   slots (the last one padded with zeros), `bits` words; bit `i` of word `j`
+ *   is bit `j` of slot `32 * block + i`.
  */
 
-export const MAGIC = 0x424c4b35; // BLK5; rejects the previous formats.
-export const HEADER_BYTES = 15;
-/** Bytes of one index entry. */
-export const INDEX_ENTRY_BYTES = 12;
-/** Hashes per block, as a power of two: a lookup decodes at most this many. */
-export const BLOCK_BITS = 6;
+export const MAGIC = 0x424c4b36; // BLK6; rejects the previous formats.
+export const HEADER_WORDS = 4;
+/** Coefficient bits per name: a name touches this many consecutive slots. */
+export const RIBBON_WIDTH = 64;
+/** Names per shard, on average. */
+export const SHARD_KEYS = 2048;
+/** The most slots the index can give one shard. */
+export const MAX_SHARD_SLOTS = 0xffff;
+const MAX_SHARDS = 2 ** 20;
 
-/** A loaded blocklist: its index and the bit stream of the gaps. */
+/** A loaded blocklist: where each shard's slots are, and the slots. */
 export interface BlockSet {
-  /** Number of hashes, each `bits` bits wide. */
+  /** Number of listed names. */
   count: number;
+  /** Bits per slot, which is also the fingerprint size. */
   bits: number;
-  k: number;
-  blockBits: number;
-  /** The first hash of each block, increasing. */
-  firsts: Float64Array;
-  /** Where in the stream the rest of each block starts, in bits. */
-  offsets: Uint32Array;
-  stream: Uint8Array;
-  streamBits: number;
+  shards: number;
+  /** The first slot of each shard, and after the last one the total. */
+  starts: Uint32Array;
+  /** The hash seed of each shard. */
+  seeds: Uint16Array;
+  /** The slots, in columns (see the file layout). */
+  words: Uint32Array;
 }
 
-/**
- * @return The hash `(a, b)` of a name cut to its low `bits` bits (at most 53,
- *     so the result is an exact number).
+/** The 32-bit finalizer of MurmurHash3: every input bit affects every output bit. */
+function fmix32(h: number): number {
+  h ^= h >>> 16;
+  h = Math.imul(h, 0x85ebca6b);
+  h ^= h >>> 13;
+  h = Math.imul(h, 0xc2b2ae35);
+  return (h ^ (h >>> 16)) >>> 0;
+}
+
+/** @return `floor(x * n / 2^32)`: the 32-bit `x` scaled to `[0, n)`. */
+function scale(x: number, n: number): number {
+  return Math.floor((x * n) / 4294967296);
+}
+
+/*
+ * A name's hash is two 32-bit words `(h0, h1)`. Everything a lookup needs is
+ * derived from them below; the build uses the same functions.
  */
-function truncate(a: number, b: number, bits: number): number {
-  a >>>= 0;
-  if (bits <= 32) {
-    return a % 2 ** bits;
-  }
-  return ((b >>> 0) % 2 ** (bits - 32)) * 2 ** 32 + a;
+
+/** The first word of the hash, from the running state `(a, b)` of `isBlocked`. */
+function mix0(a: number, b: number): number {
+  return fmix32(a ^ Math.imul(b, 0x9e3779b1));
 }
 
-/** The `bits`-bit hash of a domain, read from right to left. */
-export function hashDomain(name: string, bits: number): number {
+/** The second word of the hash. */
+function mix1(b: number, h0: number): number {
+  return fmix32(b ^ h0);
+}
+
+/** The hash `[h0, h1]` of a domain, read from right to left. */
+export function hashDomain(name: string): [number, number] {
   let a = 0x811c9dc5;
   let b = 0x9747b28c;
   for (let i = name.length - 1; i >= 0; i--) {
@@ -67,197 +96,146 @@ export function hashDomain(name: string, bits: number): number {
     a = Math.imul(a ^ c, 0x01000193);
     b = Math.imul(b ^ c, 0x85ebca6b) ^ (b >>> 15);
   }
-  return truncate(a, b, bits);
+  const h0 = mix0(a, b);
+  return [h0, mix1(b, h0)];
+}
+
+/** The shard a name belongs to. */
+export function shardOf(h0: number, shards: number): number {
+  return scale(h0, shards);
+}
+
+/** What the name's slots must XOR to: bit `j` for bit `j` of the slots. */
+export function fingerprint(h0: number, h1: number): number {
+  return fmix32(h1 + Math.imul(h0, 0xcc9e2d51));
+}
+
+/** The name's first slot in a shard of `slots` slots hashed with `seed`. */
+export function startOf(
+  h0: number,
+  h1: number,
+  seed: number,
+  slots: number
+): number {
+  const x = fmix32(
+    (h0 + Math.imul(h1, 0x1b873593)) ^ Math.imul(seed, 0x27d4eb2f)
+  );
+  return scale(x, slots - RIBBON_WIDTH + 1);
+}
+
+/** Coefficient bits 0 to 31 (bit 0 is always set), as a signed 32-bit number. */
+export function coefLow(h0: number, seed: number): number {
+  return fmix32(h0 ^ Math.imul(seed + 1, 0x9e3779b1)) | 1;
+}
+
+/** Coefficient bits 32 to 63, as a signed 32-bit number. */
+export function coefHigh(h1: number, seed: number): number {
+  return fmix32(h1 ^ Math.imul(seed + 1, 0x85ebca77)) | 0;
 }
 
 /**
- * @return The 32 bits that start at bit `pos` of `bytes` (bits past the end
- *     read as zeros).
+ * @return The little-endian words of `buffer` as numbers of this host, or the
+ *     other way round: the buffer itself, or on a big-endian host a swapped
+ *     copy.
  */
-function window(bytes: Uint8Array, pos: number): number {
-  const at = pos >> 3;
-  const shift = pos & 7;
-  if (at + 4 >= bytes.length) {
-    // Near the end: read the bytes that exist, without going past the array.
-    let high = 0;
-    for (let i = 0; i < 4; i++) {
-      high = (high << 8) | (at + i < bytes.length ? bytes[at + i] : 0);
-    }
-    const next = at + 4 < bytes.length ? bytes[at + 4] : 0;
-    return shift === 0
-      ? high >>> 0
-      : ((high << shift) | (next >>> (8 - shift))) >>> 0;
+export function littleEndianWords(
+  buffer: ArrayBuffer
+): Uint32Array<ArrayBuffer> {
+  const words = new Uint32Array(buffer, 0, buffer.byteLength >> 2);
+  if (new Uint8Array(new Uint32Array([1]).buffer)[0] === 1) {
+    return words;
   }
-  const high =
-    ((bytes[at] << 24) |
-      (bytes[at + 1] << 16) |
-      (bytes[at + 2] << 8) |
-      bytes[at + 3]) >>>
-    0;
-  return shift === 0
-    ? high
-    : ((high << shift) | (bytes[at + 4] >>> (8 - shift))) >>> 0;
-}
-
-/** Reads Golomb-Rice coded gaps one after the other from a bit position. */
-export class GapReader {
-  /** Where the next gap starts, in bits. */
-  pos: number;
-
-  constructor(
-    private readonly bytes: Uint8Array,
-    private readonly k: number,
-    pos: number
-  ) {
-    this.pos = pos;
-  }
-
-  /** @return The next gap. */
-  next(): number {
-    let quotient = 0;
-    for (;;) {
-      const w = window(this.bytes, this.pos);
-      if (w === 0xffffffff) {
-        quotient += 32;
-        this.pos += 32;
-        continue;
-      }
-      const ones = Math.clz32(~w);
-      quotient += ones;
-      this.pos += ones + 1;
-      break;
-    }
-    let remainder = 0;
-    if (this.k > 0) {
-      remainder = window(this.bytes, this.pos) >>> (32 - this.k);
-      this.pos += this.k;
-    }
-    return quotient * 2 ** this.k + remainder;
-  }
+  const view = new DataView(buffer);
+  return words.map((_, i) => view.getUint32(4 * i, true));
 }
 
 /**
- * Reads a blocklist file. Only the index is read; the hashes are decoded when
- * a name is looked up (see `decodeAll` for all of them).
+ * Reads a blocklist file. Only the index is read; the slots are read when a
+ * name is looked up.
  * @throws If it is not a valid blocklist.
  */
 export function decodeBlockset(buffer: ArrayBuffer): BlockSet {
-  const bytes = new Uint8Array(buffer);
-  if (bytes.length < HEADER_BYTES) {
+  const file = littleEndianWords(buffer);
+  // A missing asset may be answered with index.html; old assets are invalid.
+  if (file.length < HEADER_WORDS || file[0] !== MAGIC) {
     throw new Error('not a blocklist');
   }
-  const view = new DataView(buffer);
-  if (view.getUint32(0, true) !== MAGIC) {
-    // A missing asset may be answered with index.html; old assets are invalid.
-    throw new Error('not a blocklist');
-  }
-  const count = view.getUint32(4, true);
-  const k = bytes[8];
-  const bits = bytes[9];
-  const blockBits = bytes[10];
-  const streamBits = view.getUint32(11, true);
-  if (k > 31 || bits < k || bits > 53 || blockBits < 1 || blockBits > 16) {
+  const [, count, bits, shards] = file;
+  if (bits > 32 || shards < 1 || shards > MAX_SHARDS) {
     throw new Error('bad blocklist header');
   }
-
-  const blocks = Math.ceil(count / 2 ** blockBits);
-  const streamStart = HEADER_BYTES + blocks * INDEX_ENTRY_BYTES;
-  const expected = streamStart + Math.ceil(streamBits / 8);
-  if (bytes.length < expected) {
+  const tableStart = HEADER_WORDS + shards;
+  if (file.length < tableStart) {
     throw new Error('truncated blocklist');
   }
-  if (bytes.length !== expected) {
-    throw new Error('bad blocklist length');
-  }
 
-  const firsts = new Float64Array(blocks);
-  const offsets = new Uint32Array(blocks);
-  for (let b = 0, at = HEADER_BYTES; b < blocks; b++, at += INDEX_ENTRY_BYTES) {
-    firsts[b] =
-      view.getUint32(at + 4, true) * 2 ** 32 + view.getUint32(at, true);
-    offsets[b] = view.getUint32(at + 8, true);
-    const ordered =
-      b === 0 || (firsts[b] > firsts[b - 1] && offsets[b] >= offsets[b - 1]);
-    if (!ordered || offsets[b] > streamBits || firsts[b] >= 2 ** bits) {
+  const starts = new Uint32Array(shards + 1);
+  const seeds = new Uint16Array(shards);
+  for (let s = 0; s < shards; s++) {
+    const slots = file[HEADER_WORDS + s] & MAX_SHARD_SLOTS;
+    if (slots !== 0 && slots < RIBBON_WIDTH) {
       throw new Error('bad blocklist index');
     }
+    seeds[s] = file[HEADER_WORDS + s] >>> 16;
+    starts[s + 1] = starts[s] + slots;
   }
-  return {
-    count,
-    bits,
-    k,
-    blockBits,
-    firsts,
-    offsets,
-    stream: bytes.subarray(streamStart),
-    streamBits,
-  };
+  const expected = 4 * (tableStart + Math.ceil(starts[shards] / 32) * bits);
+  if (buffer.byteLength < expected) {
+    throw new Error('truncated blocklist');
+  }
+  if (buffer.byteLength !== expected) {
+    throw new Error('bad blocklist length');
+  }
+  return {count, bits, shards, starts, seeds, words: file.subarray(tableStart)};
 }
 
-/** How many hashes block `b` holds. */
-export function blockLength(set: BlockSet, b: number): number {
-  return Math.min(2 ** set.blockBits, set.count - b * 2 ** set.blockBits);
-}
-
-/** Whether the set holds the hash: decodes the one block that could. */
-function contains(set: BlockSet, value: number): boolean {
-  const {firsts} = set;
-  let low = 0;
-  let high = firsts.length - 1;
-  let block = -1; // The last block whose first hash is at most `value`.
-  while (low <= high) {
-    const mid = (low + high) >>> 1;
-    if (firsts[mid] <= value) {
-      block = mid;
-      low = mid + 1;
-    } else {
-      high = mid - 1;
-    }
-  }
-  if (block < 0) {
+/** Whether the set holds the name whose running hash state is `(a, b)`. */
+function contains(set: BlockSet, a: number, b: number): boolean {
+  const h0 = mix0(a, b);
+  const shard = shardOf(h0, set.shards);
+  const base = set.starts[shard];
+  const slots = set.starts[shard + 1] - base;
+  if (slots === 0) {
     return false;
   }
-  let current = firsts[block];
-  if (current === value) {
-    return true;
-  }
-  // The lookup's hot loop, with the usual gap (its unary part and remainder
-  // both inside one 32-bit window) read in place: a GapReader per lookup
-  // cost about a third of it. A rarer, longer gap is read by a GapReader.
-  const {stream, k} = set;
-  const scale = 2 ** k;
-  let pos = set.offsets[block];
-  for (let i = blockLength(set, block) - 1; i > 0; i--) {
-    const w = window(stream, pos);
-    const ones = w !== 0xffffffff ? Math.clz32(~w) : 32;
-    if (ones + 1 + k <= 32) {
-      pos += ones + 1 + k;
-      current += ones * scale + (k > 0 ? (w << (ones + 1)) >>> (32 - k) : 0);
-    } else {
-      const gaps = new GapReader(stream, k, pos);
-      current += gaps.next();
-      pos = gaps.pos;
+  const h1 = mix1(b, h0);
+  const seed = set.seeds[shard];
+  const first = base + startOf(h0, h1, seed, slots);
+  // The coefficients as masks over the blocks they span: three, or two if
+  // they start at a block (then the third mask is 0, on the second block).
+  const shift = first & 31;
+  const low = coefLow(h0, seed);
+  const high = coefHigh(h1, seed);
+  const m0 = low << shift;
+  const m1 = shift === 0 ? high : (low >>> (32 - shift)) | (high << shift);
+  const m2 = shift === 0 ? 0 : high >>> (32 - shift);
+  const {bits, words} = set;
+  const third = shift === 0 ? bits : 2 * bits;
+  const sum = fingerprint(h0, h1);
+  let at = (first >>> 5) * bits;
+  for (let j = 0; j < bits; j++, at++) {
+    let x =
+      (words[at] & m0) ^ (words[at + bits] & m1) ^ (words[at + third] & m2);
+    // The parity of `x`: of its 4-bit XOR fold, from a 16-entry table.
+    x ^= x >>> 16;
+    x ^= x >>> 8;
+    x ^= x >>> 4;
+    if (((0x6996 >>> (x & 15)) ^ (sum >>> j)) & 1) {
+      return false;
     }
-    if (current >= value) {
-      return current === value;
-    }
   }
-  return false;
+  return true;
 }
 
 /** Whether the name or any of its parent domains is blocked. */
 export function isBlocked(set: BlockSet, name: string): boolean {
-  const {bits} = set;
   let a = 0x811c9dc5;
   let b = 0x9747b28c;
   for (let i = name.length - 1; i >= 0; i--) {
     const c = name.charCodeAt(i);
     a = Math.imul(a ^ c, 0x01000193);
     b = Math.imul(b ^ c, 0x85ebca6b) ^ (b >>> 15);
-    if (
-      (i === 0 || name.charCodeAt(i - 1) === 46) &&
-      contains(set, truncate(a, b, bits))
-    ) {
+    if ((i === 0 || name.charCodeAt(i - 1) === 46) && contains(set, a, b)) {
       return true;
     }
   }

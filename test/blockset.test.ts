@@ -1,21 +1,20 @@
 /**
- * The blocklist file: Golomb-coded set of truncated hashes (src/blockset.ts)
- * and how list lines become domains (scripts/blocklist-lib.ts).
+ * The blocklist file: a Ribbon filter of fingerprints (src/blockset.ts) and
+ * how list lines become domains (scripts/blocklist-lib.ts).
  */
 
 import assert from 'node:assert/strict';
 import {describe, test} from 'node:test';
 import {
   buildBlockset,
-  decodeAll,
   dropMatched,
   parseDomain,
 } from '../scripts/blocklist-lib.js';
 import {
-  BLOCK_BITS,
-  HEADER_BYTES,
-  INDEX_ENTRY_BYTES,
+  HEADER_WORDS,
   MAGIC,
+  RIBBON_WIDTH,
+  SHARD_KEYS,
   decodeBlockset,
   hashDomain,
   isBlocked,
@@ -77,21 +76,26 @@ describe('blocklist file', () => {
 
   test('has the documented header', () => {
     const domains = Array.from({length: 1000}, (_, i) => `d${i}.test`);
-    const {file} = decode(domains, 20);
-    const view = new DataView(file.buffer);
-    assert.equal(view.getUint32(0, true), MAGIC);
-    assert.equal(view.getUint32(4, true), 1000);
-    assert.equal(file[8], 20, 'k');
-    assert.equal(file[9], 10 + 20, 'bits = ceil(log2 count) + k');
-    assert.equal(file[10], BLOCK_BITS, 'hashes per block, as a power of two');
-    assert.equal(
-      file.length,
-      HEADER_BYTES +
-        Math.ceil(1000 / 2 ** BLOCK_BITS) * INDEX_ENTRY_BYTES +
-        Math.ceil(view.getUint32(11, true) / 8),
-      'header, index, stream'
+    const {file, set} = decode(domains, 20);
+    const words = new Uint32Array(file.buffer);
+    assert.deepEqual(
+      [...words.subarray(0, HEADER_WORDS)],
+      [MAGIC, 1000, 20, 1]
     );
-    assert.ok(file.length > HEADER_BYTES);
+    const slots = words[HEADER_WORDS] & 0xffff;
+    assert.ok(slots >= 1000, 'at least one slot per domain');
+    assert.equal(set.starts[1], slots);
+    assert.equal(set.seeds[0], words[HEADER_WORDS] >>> 16);
+    assert.equal(
+      words.length,
+      HEADER_WORDS + 1 + Math.ceil(slots / 32) * 20,
+      'header, index, 20 words per block of 32 slots'
+    );
+  });
+
+  test('is little-endian whatever the host', () => {
+    const {file} = decode(['a.test']);
+    assert.equal(new DataView(file.buffer).getUint32(0, true), MAGIC);
   });
 
   test('drops a subdomain of another listed domain', () => {
@@ -122,14 +126,14 @@ describe('blocklist file', () => {
     }
   });
 
-  test('is much smaller than 8 bytes per domain', () => {
+  test('takes barely more than k bits per domain', () => {
     const next = random(2);
     const domains = Array.from(
       {length: 20000},
       () => `${randomLabel(next, 10)}.test`
     );
     const {file} = decode(domains, 20);
-    assert.ok(file.length < 20000 * 3.2, `${file.length} bytes`);
+    assert.ok(file.length * 8 < 20000 * 20.2, `${file.length} bytes`);
   });
 
   test('wrongly blocks an unlisted name about 2^-k of the time', () => {
@@ -148,7 +152,7 @@ describe('blocklist file', () => {
         hits++;
       }
     }
-    const expected = set.count / 2 ** set.bits;
+    const expected = 2 ** -k;
     const observed = hits / trials;
     assert.ok(
       observed < expected * 3,
@@ -158,7 +162,6 @@ describe('blocklist file', () => {
       observed > expected / 3,
       `observed ${observed}, expected ${expected}`
     );
-    assert.ok(expected <= 2 ** -k);
   });
 
   test('works for the smallest and largest k', () => {
@@ -167,42 +170,46 @@ describe('blocklist file', () => {
       {length: 300},
       () => `${randomLabel(next, 9)}.test`
     );
-    for (const k of [0, 1, 31]) {
+    for (const k of [1, 2, 32]) {
       const {set} = decode(domains, k);
       assert.ok(
         domains.every(d => isBlocked(set, d)),
         `k=${k}`
       );
     }
+    // Without a fingerprint every name in a shard that is not empty is found.
+    assert.ok(isBlocked(decode(domains, 0).set, 'unlisted.example'));
   });
 
-  test('refuses a list too large for the precision (hash over 53 bits)', () => {
-    const domains = Array.from({length: 20000}, (_, i) => `d${i}.test`);
-    assert.throws(() => buildBlockset(new Set(domains), 40), /too large/);
-  });
-
-  test('hashDomain stays within the requested number of bits', () => {
-    for (const bits of [1, 10, 32, 33, 38, 53]) {
-      const value = hashDomain('example.com', bits);
-      assert.ok(Number.isInteger(value));
-      assert.ok(value >= 0 && value < 2 ** bits, `${bits} bits: ${value}`);
+  test('refuses a precision that does not fit a slot', () => {
+    for (const k of [-1, 33, 1.5]) {
+      assert.throws(() => buildBlockset(new Set(['a.test']), k), /precision/);
     }
+  });
+
+  test('hashDomain gives two 32-bit words', () => {
+    const hash = hashDomain('example.com');
+    assert.equal(hash.length, 2);
+    for (const word of hash) {
+      assert.ok(Number.isInteger(word) && word >= 0 && word < 2 ** 32);
+    }
+    assert.deepEqual(hashDomain('example.com'), hash);
+    assert.notDeepEqual(hashDomain('example.org'), hash);
   });
 });
 
-describe('blocks and index', () => {
-  test('every size around a block boundary finds all its names and decodes in full', () => {
+describe('shards', () => {
+  test('every size around the ribbon width and a shard finds all its names', () => {
     const next = random(7);
-    const size = 2 ** BLOCK_BITS;
     for (const n of [
       1,
       2,
-      size - 1,
-      size,
-      size + 1,
-      2 * size,
-      2 * size + 1,
-      5 * size + 3,
+      RIBBON_WIDTH - 1,
+      RIBBON_WIDTH,
+      RIBBON_WIDTH + 1,
+      SHARD_KEYS,
+      SHARD_KEYS + 1,
+      5 * SHARD_KEYS + 3,
     ]) {
       const domains = Array.from(
         {length: n},
@@ -210,66 +217,33 @@ describe('blocks and index', () => {
       );
       const {set} = decode(domains);
       assert.equal(set.count, n);
-      assert.equal(set.firsts.length, Math.ceil(n / size), `${n}: blocks`);
+      assert.equal(set.shards, Math.ceil(n / SHARD_KEYS), `${n}: shards`);
       assert.ok(
         domains.every(d => isBlocked(set, d)),
         `${n}: found`
       );
-      const all = decodeAll(set);
-      assert.equal(all.length, n);
-      assert.ok(
-        all.every((v, i) => i === 0 || v > all[i - 1]),
-        `${n}: sorted`
-      );
-      assert.deepEqual(
-        [...set.firsts],
-        [...all].filter((_, i) => i % size === 0),
-        `${n}: the index holds the first hash of each block`
-      );
+      const slots = set.starts[set.shards];
+      assert.ok(slots >= n, `${n}: a slot per name`);
+      assert.ok(slots <= Math.max(RIBBON_WIDTH, n * 1.02), `${n}: ${slots}`);
     }
   });
 
-  test('lookups agree with the decoded hashes for every Rice parameter', () => {
-    // Small k makes long unary parts (gaps that span windows), large k makes
-    // the remainder not fit beside the unary part: both leave the fast path.
-    const next = random(3);
-    const domains = Array.from(
-      {length: 700},
-      () => `${randomLabel(next, 9)}.test`
-    );
-    for (const k of [0, 1, 3, 8, 12, 20, 27, 31]) {
-      const {set} = decode(domains, k);
-      const hashes = new Set(decodeAll(set));
-      assert.ok(
-        domains.every(d => isBlocked(set, d)),
-        `k=${k}: found`
-      );
-      for (let i = 0; i < 3000; i++) {
-        const name = `${randomLabel(next, 12)}.example`;
-        let expected = false;
-        for (let at = name.length - 1; at >= 0; at--) {
-          if (
-            (at === 0 || name[at - 1] === '.') &&
-            hashes.has(hashDomain(name.slice(at), set.bits))
-          ) {
-            expected = true;
-          }
-        }
-        assert.equal(isBlocked(set, name), expected, `k=${k} ${name}`);
-      }
+  test('an empty shard has no slots and finds nothing', () => {
+    // One name in a file of two shards: change the header to say so.
+    const {file} = decode(['only.test']);
+    const words = new Uint32Array(file.buffer);
+    const two = new Uint32Array(words.length + 1);
+    two.set(words.subarray(0, HEADER_WORDS));
+    two[3] = 2;
+    two.set(words.subarray(HEADER_WORDS), HEADER_WORDS + 1);
+    const set = decodeBlockset(two.buffer);
+    assert.deepEqual([...set.starts], [0, 0, RIBBON_WIDTH]);
+    const next = random(5);
+    let hits = 0;
+    for (let i = 0; i < 1000; i++) {
+      hits += Number(isBlocked(set, randomLabel(next, 12)));
     }
-  });
-
-  test('handles hashes above 32 bits (the index holds two words)', () => {
-    const next = random(11);
-    const domains = Array.from(
-      {length: 4000},
-      () => `${randomLabel(next, 10)}.test`
-    );
-    const {set} = decode(domains, 31);
-    assert.ok(set.bits > 32);
-    assert.ok(set.firsts.some(v => v >= 2 ** 32));
-    assert.ok(domains.every(d => isBlocked(set, d)));
+    assert.equal(hits, 0);
   });
 });
 
@@ -295,13 +269,13 @@ describe('decodeBlockset rejects bad files', () => {
   });
 
   test('impossible parameters', () => {
-    for (const [offset, value] of [
-      [8, 32],
-      [9, 54],
-      [9, 5],
+    for (const [word, value] of [
+      [2, 33],
+      [3, 0],
+      [3, 2 ** 20 + 1],
     ] as const) {
       const file = good();
-      file[offset] = value; // k > 31, bits > 53, bits < k
+      new Uint32Array(file.buffer)[word] = value; // bits, no shard, too many
       assert.throws(() => decodeBlockset(file.buffer as ArrayBuffer), /header/);
     }
   });
@@ -316,26 +290,16 @@ describe('decodeBlockset rejects bad files', () => {
   });
 
   test('a damaged index', () => {
-    const domains = Array.from({length: 300}, (_, i) => `d${i}.test`);
-    const good = () => decode(domains).file;
-    const entry = (b: number) => HEADER_BYTES + b * INDEX_ENTRY_BYTES;
+    const tooFew = good();
+    new Uint32Array(tooFew.buffer)[HEADER_WORDS] = RIBBON_WIDTH - 1;
+    assert.throws(() => decodeBlockset(tooFew.buffer as ArrayBuffer), /index/);
 
-    const unordered = good();
-    unordered.copyWithin(entry(1), entry(2), entry(2) + INDEX_ENTRY_BYTES);
+    const more = good();
+    new Uint32Array(more.buffer)[HEADER_WORDS] = RIBBON_WIDTH + 1;
     assert.throws(
-      () => decodeBlockset(unordered.buffer as ArrayBuffer),
-      /index/
+      () => decodeBlockset(more.buffer as ArrayBuffer),
+      /truncated/
     );
-
-    const beyond = good();
-    new DataView(beyond.buffer).setUint32(entry(1) + 8, 0xffffffff, true);
-    assert.throws(() => decodeBlockset(beyond.buffer as ArrayBuffer), /index/);
-
-    const wrongOffset = good();
-    const view = new DataView(wrongOffset.buffer);
-    view.setUint32(entry(2) + 8, view.getUint32(entry(2) + 8, true) + 1, true);
-    const set = decodeBlockset(wrongOffset.buffer as ArrayBuffer);
-    assert.throws(() => decodeAll(set), /index/, 'a full decode catches it');
   });
 
   test('trailing data', () => {
