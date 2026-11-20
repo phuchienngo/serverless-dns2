@@ -50,11 +50,44 @@ export function parseDomain(line: string): string | null {
 }
 
 /**
- * Seeds tried for a shard before it is given one more slot. More seeds find a
- * smaller file and take longer: 512 is 4 times faster to build, for 0.01 bit
- * more per domain. The index holds a seed in 16 bits.
+ * Seeds tried for a shard before it is given one more slot: all that the
+ * index can hold. Fewer seeds build faster and find a slightly larger file
+ * (4096: 16 times fewer tries).
  */
-const SEEDS = 4096;
+const SEEDS = 2 ** 16;
+
+/**
+ * Whether the names' first slots leave a solution possible. Names that start
+ * in the first slots only use those and the `RIBBON_WIDTH - 1` after them, and
+ * names that start in the last ones only those up to the end: more names than
+ * slots in either has no solution. Nearly every seed that fails fails here,
+ * at a fraction of the cost of `solve`.
+ */
+function fits(
+  h0s: number[],
+  h1s: number[],
+  seed: number,
+  slots: number
+): boolean {
+  const last = slots - RIBBON_WIDTH;
+  const starting = new Uint16Array(last + 1);
+  for (let key = 0; key < h0s.length; key++) {
+    starting[startOf(h0s[key], h1s[key], seed, slots)]++;
+  }
+  for (let at = 0, names = 0; at <= last; at++) {
+    names += starting[at];
+    if (names > at + RIBBON_WIDTH) {
+      return false;
+    }
+  }
+  for (let at = last, names = 0; at >= 0; at--) {
+    names += starting[at];
+    if (names > slots - at) {
+      return false;
+    }
+  }
+  return true;
+}
 
 /**
  * Solves one shard for one seed: finds slot values such that every name's
@@ -68,6 +101,9 @@ function solve(
   seed: number,
   slots: number
 ): Uint32Array | null {
+  if (!fits(h0s, h1s, seed, slots)) {
+    return null;
+  }
   const mask = 2 ** bits - 1; // The bits of a slot that are stored.
   // Row `i` of the system in echelon form: its coefficients start at slot `i`
   // (bit 0, set if the row is used) and `sums[i]` is what they must XOR to.
