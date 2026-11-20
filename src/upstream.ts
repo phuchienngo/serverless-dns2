@@ -54,11 +54,13 @@ let latencyAverage = 30;
 
 /**
  * Sends a query to the upstream resolver. If it has not answered after about
- * three times its recent latency, the query is also sent on a second
- * connection (to UPSTREAM_BACKUP if set), and the first answer wins.
+ * three times its recent latency, the query is sent again (to UPSTREAM_BACKUP
+ * if set, else to UPSTREAM, usually on the same connection), and the first
+ * answer wins.
  */
 export async function forward(env: Env, wire: Uint8Array): Promise<Uint8Array> {
-  const controllers = [new AbortController(), new AbortController()];
+  const primary = new AbortController();
+  let hedged: AbortController | undefined;
   const delay = Math.min(
     HEDGE_MAX_MS,
     Math.max(HEDGE_MIN_MS, 3 * latencyAverage)
@@ -70,11 +72,12 @@ export async function forward(env: Env, wire: Uint8Array): Promise<Uint8Array> {
     if (done) {
       throw new Error('not needed');
     }
-    return post(UPSTREAM_BACKUP || UPSTREAM, wire, controllers[1]);
+    hedged = new AbortController();
+    return post(UPSTREAM_BACKUP || UPSTREAM, wire, hedged);
   };
   try {
     const body = await Promise.any([
-      post(UPSTREAM, wire, controllers[0]),
+      post(UPSTREAM, wire, primary),
       hedge(),
     ]);
     const elapsed = Math.min(performance.now() - started, 300);
@@ -82,7 +85,8 @@ export async function forward(env: Env, wire: Uint8Array): Promise<Uint8Array> {
     return body;
   } finally {
     done = true;
-    controllers.forEach(c => c.abort()); // Cancel the loser.
+    primary.abort(); // Cancel the loser.
+    hedged?.abort();
   }
 }
 

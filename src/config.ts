@@ -30,8 +30,11 @@ export const STALE_MAX_S = 6 * 3600;
 export const STALE_TTL = 30;
 
 /**
- * Send the query to a second connection if the first has not answered after
- * three times the recent average latency, but not sooner or later than these.
+ * Send the query again if the first try has not answered after three times
+ * the recent average latency, but not sooner or later than these. Without an
+ * UPSTREAM_BACKUP the second try goes to the same host, and so usually shares
+ * the open connection: no new handshake, but it only helps against a slow
+ * request, not a slow connection.
  */
 export const HEDGE_MIN_MS = 40;
 export const HEDGE_MAX_MS = 150;

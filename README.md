@@ -92,8 +92,9 @@ Blocked names get NXDOMAIN. The lists are part of the Worker bundle, so nothing 
 
 - Serve-stale: an expired answer (up to 6 h past its TTL) is returned at once with TTL 30 and renewed in the background.
 - The Cache API lookup and the upstream call run in parallel; the first answer wins and the upstream call always renews the cache.
-- Hedging: if the upstream has not answered after 100 ms the query is also sent on a second connection, to the optional
-  `UPSTREAM_BACKUP` (a second DoH URL) or else to `UPSTREAM` again. The first answer wins.
+- Hedging: if the upstream has not answered after 100 ms the query is sent again, to the optional
+  `UPSTREAM_BACKUP` (a second DoH URL) or else to `UPSTREAM` again, which usually shares the open connection (no new
+  handshake, but no protection against a slow connection either). The first answer wins.
 - `Server-Timing` on the `/resolve` and `/dns-query` responses shows how long the first answer took (`first`).
 
 Build and deploy: `.github/workflows/rebuild.yml` runs `bun run build-lists` and `wrangler deploy` on every push to

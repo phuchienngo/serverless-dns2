@@ -145,18 +145,22 @@ export interface DnsRecord {
   end: number;
 }
 
+const SECTIONS: Section[] = ['answer', 'authority', 'additional'];
+
 /**
- * Lists every record of a message, in order. All other readers and editors of
- * the record sections are built on this.
+ * Lists the records of a message, in order, from the answer section up to and
+ * including `last`. All other readers and editors of the record sections are
+ * built on this.
  * @throws If a record runs past the end of the message.
  */
-export function readRecords(resp: Uint8Array): DnsRecord[] {
+export function readRecords(
+  resp: Uint8Array,
+  last: Section = 'additional'
+): DnsRecord[] {
   const view = new DataView(resp.buffer, resp.byteOffset, resp.byteLength);
-  const counts: Array<[Section, number]> = [
-    ['answer', view.getUint16(6)],
-    ['authority', view.getUint16(8)],
-    ['additional', view.getUint16(10)],
-  ];
+  const counts = SECTIONS.slice(0, SECTIONS.indexOf(last) + 1).map(
+    (section, i): [Section, number] => [section, view.getUint16(6 + 2 * i)]
+  );
   let offset = skipName(resp, HEADER_BYTES) + 4; // Skip the question.
   const records: DnsRecord[] = [];
   for (const [section, count] of counts) {
@@ -189,7 +193,7 @@ export function readRecords(resp: Uint8Array): DnsRecord[] {
 
 /** The records of one section; OPT pseudo-records are not listed. */
 function section(resp: Uint8Array, which: Section): DnsRecord[] {
-  return readRecords(resp).filter(
+  return readRecords(resp, which).filter(
     r => r.section === which && r.type !== TYPE_OPT
   );
 }
