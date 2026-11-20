@@ -11,7 +11,8 @@ import {
   UPSTREAM_TIMEOUT_MS,
 } from './config.js';
 import {buildQuery} from './query.js';
-import {encodeName, HEADER_BYTES, u16} from './wire.js';
+import {RCODE_REFUSED} from './constants.js';
+import {encodeName, HEADER_BYTES, rcodeOf, u16} from './wire.js';
 import {redirectedResult, redirectTarget} from './redirects.js';
 import {minTtl} from './response.js';
 import type {Env, Question, Result} from './types.js';
@@ -101,6 +102,23 @@ export function queryFlags(q: Question): QueryFlags {
 }
 
 /**
+ * Sends a question to the upstream resolver. Some name servers refuse a query
+ * that carries a client subnet (Akamai's, asked through Google): the question
+ * is then asked once more without one (RFC 7871 7.1.3).
+ */
+async function ask(
+  env: Env,
+  question: number[],
+  ecs: number[] | null,
+  flags: QueryFlags
+): Promise<Uint8Array> {
+  const body = await forward(env, buildQuery(question, ecs, flags));
+  return ecs && rcodeOf(body) === RCODE_REFUSED
+    ? forward(env, buildQuery(question, null, flags))
+    : body;
+}
+
+/**
  * Asks the upstream resolver, following a CDN redirect if one applies.
  */
 export async function askUpstream(
@@ -112,10 +130,9 @@ export async function askUpstream(
   const target = redirectTarget(q);
   if (target) {
     const question = [...encodeName(target), ...u16(q.type), 0, 1];
-    const resp = await forward(env, buildQuery(question, ecs, flags));
-    return redirectedResult(resp, q);
+    return redirectedResult(await ask(env, question, ecs, flags), q);
   }
-  const body = await forward(env, buildQuery(q.raw, ecs, flags));
+  const body = await ask(env, q.raw, ecs, flags);
   body.set(u16(q.id), 0);
   return {body, ttl: minTtl(body)};
 }

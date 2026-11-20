@@ -18,7 +18,7 @@ then set `dns_ddr_version 1` and `networkmonitor_async_privdns_resolution 1` via
 
 ## Extras
 
-- Honours a client-supplied ECS (dnsproxy / AdGuard Home `edns-addr`); an empty one (source prefix 0, such as Firefox's `::/0`) means "do not locate me": it is sent upstream as it is, so no subnet of the connecting IP is used (RFC 7871 7.1.2).
+- Honours a client-supplied ECS (dnsproxy / AdGuard Home `edns-addr`); an empty one (source prefix 0, such as Firefox's `::/0`) means "do not locate me": it is sent upstream as it is, so no subnet of the connecting IP is used (RFC 7871 7.1.2). If the upstream answers REFUSED to a query with a subnet (some name servers refuse those, such as Akamai's asked through Google), the query is asked once more without it (RFC 7871 7.1.3).
 - `ANY` queries get a minimal HINFO locally (`BLOCK_ANY`); `REDIRECTS` in `src/config.ts` answers a name with another name's A/AAAA records (now `medium.com` -> `voz.vn`); not for a query with DO, since what is made here carries no signature.
 - `/resolve?name=8.8.8.8&type=PTR` converts an IP to its reverse name.
 - The DO and CD bits of a query are passed to the upstream (DNSSEC records and `AD` come back as asked; a query with AD but no DO also gets `AD`). Answers made

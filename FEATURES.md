@@ -16,7 +16,7 @@ Every feature, the standard it follows, where it lives and which test covers it.
 | Negative answers carry a SOA, minimum TTL | RFC 2308 | `response.ts` | `dns.test.ts`, `resolve.test.ts` |
 | Padding of responses to 468 bytes | RFC 7830, 8467 | `response.ts` | `dns.test.ts`, `resolve.test.ts` |
 | Extended DNS Errors (15 blocked, 3 stale answer, 19 stale NXDOMAIN, 23 upstream unreachable) | RFC 8914 | `response.ts`, `resolve.ts` | `dns.test.ts`, `blocking.test.ts`, `resolve.test.ts` |
-| Client subnet: /24 and /48, client-chosen subnet, source prefix 0 = not located, per-subnet cache, no ECS in responses to queries without one | RFC 7871 | `ecs.ts`, `resolve.ts` | `ecs.test.ts`, `resolve.test.ts` |
+| Client subnet: /24 and /48, client-chosen subnet, source prefix 0 = not located, per-subnet cache, no ECS in responses to queries without one, a query refused with a subnet is asked again without | RFC 7871 | `ecs.ts`, `resolve.ts`, `upstream.ts` | `ecs.test.ts`, `resolve.test.ts` |
 | Cache: TTL countdown (answer, authority, additional), LRU, Cache API, early refresh | RFC 1035, 2181 | `cache.ts` | `cache.test.ts`, `resolve.test.ts` |
 | Serve-stale with TTL 30 and EDE 3 | RFC 8767 (deliberate deviation: served at once, not after a failed refresh) | `cache.ts`, `resolve.ts` | `cache.test.ts`, `resolve.test.ts` |
 | Minimum cache TTL 60 s | none (deliberate deviation) | `cache.ts` | `cache.test.ts` |

@@ -627,6 +627,61 @@ describe('client subnet (RFC 7871)', () => {
   });
 });
 
+describe('client subnet: a server that refuses it (RFC 7871 7.1.3)', () => {
+  const hasEcs = (query: Msg) => !!query.opt?.options.some(o => o.code === 8);
+  /** Refuses any query with a client subnet, as Akamai's servers do. */
+  const refuseEcs = (q: Msg) =>
+    hasEcs(q)
+      ? makeResponse({qname: q.question[0].name, qtype: T.A, rcode: 5})
+      : answerA(q);
+
+  test('the question is asked again without the subnet', async () => {
+    useUpstream(refuseEcs);
+    const {msg} = await ask(fresh(), T.A, {}, {ip: '203.0.113.77'});
+    assert.equal(msg.rcode, 0);
+    assert.equal(msg.answer.length, 1);
+    assert.deepEqual(
+      upstream.calls.map(call => hasEcs(call.query)),
+      [true, false]
+    );
+  });
+
+  test('and the answer is cached for that subnet', async () => {
+    useUpstream(refuseEcs);
+    const name = fresh();
+    await ask(name, T.A, {}, {ip: '203.0.113.77'});
+    const {msg} = await ask(name, T.A, {}, {ip: '203.0.113.78'});
+    assert.equal(msg.rcode, 0);
+    assert.equal(upstream.calls.length, 2, 'no third call');
+  });
+
+  test('a subnet the client chose is retried without it too', async () => {
+    useUpstream(refuseEcs);
+    const option = [0, 8, 0, 7, 0, 1, 24, 0, 198, 51, 100];
+    const {msg} = await ask(fresh(), T.A, {}, {ecs: option});
+    assert.equal(msg.rcode, 0);
+    assert.equal(upstream.calls.length, 2);
+  });
+
+  test('a refusal of a query without a subnet is not retried', async () => {
+    useUpstream(q =>
+      makeResponse({qname: q.question[0].name, qtype: T.A, rcode: 5})
+    );
+    const {msg} = await ask(fresh(), T.A);
+    assert.equal(msg.rcode, 5);
+    assert.equal(upstream.calls.length, 1);
+  });
+
+  test('a server that refuses either way is asked twice and no more', async () => {
+    useUpstream(q =>
+      makeResponse({qname: q.question[0].name, qtype: T.A, rcode: 5})
+    );
+    const {msg} = await ask(fresh(), T.A, {}, {ip: '203.0.113.77'});
+    assert.equal(msg.rcode, 5);
+    assert.equal(upstream.calls.length, 2);
+  });
+});
+
 describe('client subnet: a client that asks not to be located (RFC 7871 7.1.2)', () => {
   const none = [0, 8, 0, 4, 0, 1, 0, 0]; // family 1, source prefix 0
   const ecsOf = (call: {query: Msg}) =>
