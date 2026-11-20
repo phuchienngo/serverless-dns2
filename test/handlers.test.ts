@@ -2,6 +2,7 @@
 
 import assert from 'node:assert/strict';
 import {afterEach, beforeEach, describe, test} from 'node:test';
+import {RCODE_BADVERS} from '../src/constants.js';
 import {handle, handleJson} from '../src/handlers.js';
 import {
   T,
@@ -303,6 +304,16 @@ describe('/resolve (Google JSON API)', () => {
 });
 
 describe('dns64 parameter', () => {
+  test('ipv4only.arpa still rejects unsupported EDNS versions with DNS64 on', async () => {
+    const wire = makeQuery('ipv4only.arpa', T.AAAA, {ednsVersion: 1});
+    const res = await get(`/dns-query?dns=${b64url(wire)}&dns64=1`);
+    const msg = parseMsg(new Uint8Array(await res.arrayBuffer()));
+    assert.equal(res.status, 200);
+    assert.equal(msg.rcode, RCODE_BADVERS);
+    assert.equal(msg.answer.length, 0);
+    assert.equal(upstream.calls.length, 0);
+  });
+
   const aaaa = async (query: string) => {
     upstream.restore();
     upstream = mockUpstream(q =>

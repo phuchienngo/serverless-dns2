@@ -61,10 +61,8 @@ export interface QueryOptions {
   ad?: boolean;
   /** Bytes of EDNS Padding. */
   padding?: number;
-  /** ECS option: source prefix length and the address bytes. */
   ecs?: {family: 1 | 2; prefix: number; address: number[]};
   qclass?: number;
-  /** Raw bytes of an EDNS Cookie option. */
   cookie?: number[];
 }
 
@@ -163,7 +161,6 @@ export interface Msg {
   answer: Rr[];
   authority: Rr[];
   additional: Rr[];
-  /** The OPT record of the additional section, if any. */
   opt?: OptInfo;
   optCount: number;
 }
@@ -403,7 +400,6 @@ export function makeResponse(s: ResponseSpec): Uint8Array {
 // --- upstream mock --------------------------------------------------------
 
 export interface UpstreamCall {
-  /** The query the gateway sent, parsed. */
   query: Msg;
   raw: Uint8Array;
   url: string;

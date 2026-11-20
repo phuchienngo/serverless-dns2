@@ -735,6 +735,7 @@ describe('client subnet: what comes back for a subnet the client sent', () => {
     });
     const wire = makeQuery(fresh(), T.A, {
       ecs: {family: 1, prefix: 32, address: [198, 51, 100, 9]},
+      padding: 1,
     });
     const res = await handle(
       new Request('https://dns.test/dns-query', {
@@ -746,7 +747,9 @@ describe('client subnet: what comes back for a subnet the client sent', () => {
     );
     const msg = parseMsg(new Uint8Array(await res.arrayBuffer()));
     const data = msg.opt!.options.find(o => o.code === 8)!.data;
-    assert.equal(data[2], 32, 'source prefix as in the query');
+    assert.deepEqual([...data], [0, 1, 32, 24, 198, 51, 100, 9]);
+    assert.equal(msg.opt!.options.at(-1)?.code, 12);
+    assert.equal(msg.size % 468, 0);
   });
 });
 

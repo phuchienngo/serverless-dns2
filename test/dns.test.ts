@@ -11,6 +11,7 @@ import {alpnValue, svcbRdata} from '../src/svcb.js';
 import {EDE_BLOCKED} from '../src/constants.js';
 import {
   addOptOption,
+  ednsOption,
   rewriteOpt,
   cnameTargets,
   copyRd,
@@ -834,6 +835,24 @@ describe('rewriteOpt (all OPT changes in one pass)', () => {
       });
       assert.deepEqual(together, oneByOne, `size ${n}`);
     }
+  });
+
+  test('replaces an option before appending other options and padding', () => {
+    const resp = response(10);
+    const together = rewriteOpt(resp, {
+      replace: {
+        code: 8,
+        withData: current => [0, 1, 32, ...current.slice(3), 7],
+      },
+      add: [ede, cookie],
+      pad: true,
+    });
+    const ecs = ednsOption(8, [0, 1, 32, 24, 203, 0, 113, 7]);
+    const replaced = addOptOption(removeOptOption(resp, 8), ecs);
+    const oneByOne = padResponse(
+      addOptOption(addOptOption(replaced, ede), cookie)
+    );
+    assert.deepEqual(together, oneByOne);
   });
 
   test('the result parses, with the right counts and OPT length', () => {

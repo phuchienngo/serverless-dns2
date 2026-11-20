@@ -6,7 +6,7 @@
 
 Config: the only secret is the optional `COOKIE_SECRET` (see DNS Cookies below). The upstream DoH URL (`UPSTREAM`, optional `UPSTREAM_BACKUP`) and the other knobs are in `src/config.ts`.
 
-Layout: `src/` (TypeScript logic; `core.ts` is the gateway, `worker.ts` the Workers entry point that routes `/dns-query` and `/resolve`; `public/` holds the static index page; the lists built by `bun run build-lists` go to `build/` and are bundled into the Worker).
+`src/worker.ts` routes `/dns-query` and `/resolve` to `src/handlers.ts`. `public/` holds the static index page. `bun run build-lists` writes the lists to `build/` for bundling into the Worker.
 
 Dev (with [Bun](https://bun.sh)): `bun install`, `bun run check` (tsc), `bun test`, `bun run format` (Prettier, Google/gts style).
 

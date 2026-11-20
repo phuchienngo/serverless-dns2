@@ -15,7 +15,7 @@ import {RCODE_REFUSED} from './constants.js';
 import {encodeName, HEADER_BYTES, rcodeOf, u16} from './wire.js';
 import {redirectedResult, redirectTarget} from './redirects.js';
 import {minTtl} from './response.js';
-import type {Env, Question, Result} from './types.js';
+import type {Question, Result} from './types.js';
 
 /**
  * Sends a query to one DoH resolver.
@@ -58,7 +58,7 @@ let latencyAverage = 30;
  * if set, else to UPSTREAM, usually on the same connection), and the first
  * answer wins.
  */
-export async function forward(env: Env, wire: Uint8Array): Promise<Uint8Array> {
+export async function forward(wire: Uint8Array): Promise<Uint8Array> {
   const primary = new AbortController();
   let hedged: AbortController | undefined;
   const delay = Math.min(
@@ -111,14 +111,13 @@ export function queryFlags(q: Question): QueryFlags {
  * is then asked once more without one (RFC 7871 7.1.3).
  */
 async function ask(
-  env: Env,
   question: number[],
   ecs: number[] | null,
   flags: QueryFlags
 ): Promise<Uint8Array> {
-  const body = await forward(env, buildQuery(question, ecs, flags));
+  const body = await forward(buildQuery(question, ecs, flags));
   return ecs && rcodeOf(body) === RCODE_REFUSED
-    ? forward(env, buildQuery(question, null, flags))
+    ? forward(buildQuery(question, null, flags))
     : body;
 }
 
@@ -127,16 +126,15 @@ async function ask(
  */
 export async function askUpstream(
   q: Question,
-  env: Env,
   ecs: number[] | null,
   flags: QueryFlags
 ): Promise<Result> {
   const target = redirectTarget(q);
   if (target) {
     const question = [...encodeName(target), ...u16(q.type), 0, 1];
-    return redirectedResult(await ask(env, question, ecs, flags), q);
+    return redirectedResult(await ask(question, ecs, flags), q);
   }
-  const body = await ask(env, q.raw, ecs, flags);
+  const body = await ask(q.raw, ecs, flags);
   body.set(u16(q.id), 0);
   return {body, ttl: minTtl(body)};
 }

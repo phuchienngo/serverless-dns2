@@ -37,7 +37,6 @@ export function svcbRdata(
 export interface SvcParam {
   key: number;
   value: Uint8Array;
-  /** Offset of the key. */
   start: number;
 }
 

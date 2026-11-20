@@ -145,12 +145,9 @@ export async function handle(
   try {
     question = parseQuestion(wire);
   } catch {
-    // Not a well-formed single-question query.
     return textResponse('bad dns message', 400);
   }
 
-  // Honour a subnet the client chose itself; an empty one (privacy signal)
-  // is ignored, so the connecting IP is used.
   const options = makeOptions(url, ctx);
   const ecs = clientEcs(question.ecs);
   if (ecs) {

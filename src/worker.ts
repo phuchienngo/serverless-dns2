@@ -9,7 +9,7 @@ import cloudflareIps from '../build/cloudflare-ips.json';
 import rules from '../build/rules.json';
 import {loadBlocklist} from './blocklist.js';
 import {loadCloudflareRanges} from './cloudflare-ips.js';
-import {handle, handleJson} from './core.js';
+import {handle, handleJson} from './handlers.js';
 import type {Env} from './types.js';
 
 // The lists built by `bun run build-lists` are bundled with the Worker, so a

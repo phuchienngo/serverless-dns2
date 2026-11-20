@@ -165,7 +165,6 @@ async function synthesizePtr(
 
 /** How an answer to a question of one type is made from another lookup. */
 interface Synthesizer {
-  /** The response codes of the upstream answer that it replaces. */
   rcodes: number[];
   make: (
     q: Question,
@@ -198,25 +197,20 @@ function synthesizerFor(q: Question, result: Result): Synthesizer | null {
 }
 
 /**
- * Resolves a question with DNS64 (RFC 6147): `ipv4only.arpa` is answered
- * locally, and what the upstream has no answer for is made from another
- * lookup, AAAA records from A records and PTR records for the prefix. AAAA
+ * Synthesizes an answer with DNS64 (RFC 6147) when the original answer lacks
+ * data: AAAA records from A records, or PTR records for the prefix. AAAA
  * records are owned by the question name (a CNAME chain is flattened), their
  * TTL is the smaller of the A record's and the AAAA answer's (5.1.7). What is
  * made is kept in memory under `key`, so the lookup is not repeated.
  * DNS64 is a courtesy: if making an answer fails, the upstream's stands.
- * @param resolveOne Resolves a question the normal way.
+ * @param lookup Resolves the additional question used to synthesize an answer.
  */
 export async function withDns64(
   q: Question,
   key: string,
-  resolveOne: (q: Question) => Promise<Result>
+  result: Result,
+  lookup: (q: Question) => Promise<Result>
 ): Promise<Result> {
-  const local = ipv4onlyAnswer(q);
-  if (local) {
-    return local;
-  }
-  const result = await resolveOne(q);
   try {
     const synthesizer = synthesizerFor(q, result);
     if (!synthesizer) {
@@ -226,7 +220,7 @@ export async function withDns64(
     if (kept && !kept.refresh) {
       return kept.result;
     }
-    const made = await synthesizer.make(q, result, resolveOne);
+    const made = await synthesizer.make(q, result, lookup);
     if (!made) {
       return result;
     }

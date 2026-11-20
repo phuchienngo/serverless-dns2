@@ -28,10 +28,10 @@ import {
 import {encodeName, parseAnswers, rcodeOf} from './wire.js';
 import {makeQuestion} from './query.js';
 import {cookieOption} from './cookie.js';
-import {withDns64} from './dns64.js';
+import {ipv4onlyAnswer, withDns64} from './dns64.js';
 import {getCloudflareRanges} from './cloudflare-ips.js';
 import {addEch, startEchProbe} from './ech.js';
-import {echoClientEcs, makeEcs} from './ecs.js';
+import {clientEcsReply, makeEcs} from './ecs.js';
 import {ddrAnswer, isDdr, localAnswer, typeAnswer} from './local.js';
 import type {Question, ResolveOptions, Result} from './types.js';
 import {askUpstream, coalesce, forward, queryFlags} from './upstream.js';
@@ -108,9 +108,7 @@ export async function resolve(
   q: Question,
   options: ResolveOptions
 ): Promise<Result> {
-  const result = options.dns64
-    ? await withDns64(q, dns64Key(q, options), a => resolveQuestion(a, options))
-    : await resolveQuestion(q, options);
+  const result = await resolveQuestion(q, options);
   return {...result, body: await shape(q, result, options)};
 }
 
@@ -124,14 +122,11 @@ async function shape(
   result: Result,
   options: ResolveOptions
 ): Promise<Uint8Array> {
-  let body = copyRd(result.body, q.rd);
+  const body = copyRd(result.body, q.rd);
   if (!q.edns) {
     // The upstream always sends an OPT record; a client that sent none must
     // not get one (RFC 6891).
     return stripOpt(body);
-  }
-  if (options.ecs) {
-    body = echoClientEcs(body, q.ecs);
   }
   const added: number[][] = [];
   if (result.stale) {
@@ -143,8 +138,13 @@ async function shape(
   if (cookie) {
     added.push(cookie);
   }
+  const {ecs} = q;
   return rewriteOpt(body, {
-    remove: options.ecs ? undefined : OPTION_ECS, // RFC 7871 7.2.2.
+    remove: options.ecs ? undefined : OPTION_ECS,
+    replace:
+      options.ecs && ecs
+        ? {code: OPTION_ECS, withData: data => clientEcsReply(data, ecs)}
+        : undefined,
     add: added,
     pad: q.padding,
   });
@@ -156,7 +156,8 @@ async function resolveQuestion(
 ): Promise<Result> {
   const {host} = options;
 
-  const special = localAnswer(q, host);
+  const special =
+    localAnswer(q, host) ?? (options.dns64 ? ipv4onlyAnswer(q) : null);
   if (special) {
     return special;
   }
@@ -165,7 +166,14 @@ async function resolveQuestion(
   }
 
   const reason = blockReason(q.name);
-  return reason ? nxdomain(q, reason) : screen(q, await answer(q, options));
+  const result = reason
+    ? nxdomain(q, reason)
+    : screen(q, await answer(q, options));
+  return options.dns64
+    ? withDns64(q, dns64Key(q, options), result, a =>
+        resolveQuestion(a, {...options, dns64: false})
+      )
+    : result;
 }
 
 /**
@@ -173,7 +181,7 @@ async function resolveQuestion(
  * the caches and the upstream resolver.
  */
 async function answer(q: Question, options: ResolveOptions): Promise<Result> {
-  const {env, host, cache, waitUntil} = options;
+  const {host, cache, waitUntil} = options;
   const flags = queryFlags(q);
 
   const typed = typeAnswer(q);
@@ -190,13 +198,8 @@ async function answer(q: Question, options: ResolveOptions): Promise<Result> {
       // validates DNSSEC (DO) would reject; give those the real record.
       const probe = flags.dnssec
         ? null
-        : startEchProbe(
-            q,
-            ecs,
-            wire => forward(env, wire),
-            getCloudflareRanges
-          );
-      return addEch(await askUpstream(q, env, ecs, flags), q, probe);
+        : startEchProbe(q, ecs, forward, getCloudflareRanges);
+      return addEch(await askUpstream(q, ecs, flags), q, probe);
     });
     store(cache, key, result, waitUntil);
     return result;

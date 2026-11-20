@@ -10,7 +10,6 @@ export interface Question {
   name: string;
   type: number;
   raw: number[];
-  /** Whether the query carried an EDNS (OPT) record. */
   edns: boolean;
   /** The DO bit of that record: the client wants DNSSEC records. */
   dnssecOk: boolean;
@@ -23,7 +22,6 @@ export interface Question {
   opcode: number;
   /** EDNS version of the query's OPT record (0 if there is none). */
   ednsVersion: number;
-  /** Whether the query has an EDNS Padding option (RFC 7830). */
   padding: boolean;
   /** The EDNS Cookie option (RFC 7873): client cookie, then server cookie. */
   cookie: number[] | null;
@@ -38,12 +36,10 @@ export interface Result {
   body: Uint8Array;
   ttl: number;
   hit?: boolean;
-  /** Served past its TTL (RFC 8767). */
   stale?: boolean;
 }
 
 export interface Env {
-  /** Static assets of the Worker (the index page). */
   ASSETS?: Fetcher;
   /** Secret for DNS Cookies (RFC 7873); without it cookies are ignored. */
   COOKIE_SECRET?: string;
@@ -64,7 +60,6 @@ export interface ResolveOptions extends Context {
    * source prefix 0 is the client asking not to be located.
    */
   ecs?: number[] | null;
-  /** Synthesize AAAA records from A records (DNS64, RFC 6147). */
   dns64?: boolean;
   /** Filled with durations in ms (see `serverTiming`). */
   timing?: Record<string, number>;

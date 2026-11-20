@@ -194,6 +194,8 @@ function splice(
 export interface OptEdit {
   /** Remove every option with this code. */
   remove?: number;
+  /** Replace an existing option using its first value. Null keeps it as is. */
+  replace?: {code: number; withData: (data: Uint8Array) => number[] | null};
   /** Options to add, each as its code, length and data. */
   add?: number[][];
   /** Add a Padding option to make the size a multiple of 468 bytes. */
@@ -208,8 +210,8 @@ export interface OptEdit {
  *     or cannot be edited; the input is never changed.
  */
 export function rewriteOpt(resp: Uint8Array, edit: OptEdit): Uint8Array {
-  const {remove, add = [], pad = false} = edit;
-  if (remove === undefined && !add.length && !pad) {
+  const {remove, replace, add = [], pad = false} = edit;
+  if (remove === undefined && !replace && !add.length && !pad) {
     return resp;
   }
   try {
@@ -218,15 +220,28 @@ export function rewriteOpt(resp: Uint8Array, edit: OptEdit): Uint8Array {
       return resp;
     }
     const view = new DataView(resp.buffer, resp.byteOffset, resp.byteLength);
-    const unwanted =
-      remove === undefined
-        ? []
-        : readOptions(view, opt).options.filter(o => o.code === remove);
-    if (!unwanted.length && !add.length && !pad) {
+    const options =
+      remove === undefined && !replace ? [] : readOptions(view, opt).options;
+    let replaced: number | undefined;
+    let additions = add;
+    if (replace) {
+      const current = options.find(o => o.code === replace.code);
+      const data = current
+        ? replace.withData(resp.subarray(current.start + 4, current.end))
+        : null;
+      if (data !== null) {
+        replaced = replace.code;
+        additions = [ednsOption(replaced, data), ...add];
+      }
+    }
+    const unwanted = options.filter(
+      o => o.code === remove || o.code === replaced
+    );
+    if (!unwanted.length && !additions.length && !pad) {
       return resp;
     }
     const removed = unwanted.reduce((n, o) => n + o.end - o.start, 0);
-    const added = add.reduce((n, o) => n + o.length, 0);
+    const added = additions.reduce((n, o) => n + o.length, 0);
     const size = resp.length - removed + added;
     const padding = pad
       ? 4 + ((PADDING_BLOCK - ((size + 4) % PADDING_BLOCK)) % PADDING_BLOCK)
@@ -243,7 +258,7 @@ export function rewriteOpt(resp: Uint8Array, edit: OptEdit): Uint8Array {
       from = o.end;
     }
     copyTo(opt.end);
-    for (const option of add) {
+    for (const option of additions) {
       out.set(option, at);
       at += option.length;
     }

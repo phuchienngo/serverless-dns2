@@ -50,11 +50,7 @@ async function synthesize(
   lookup: (q: Question) => Promise<Result>,
   key = `https://dns.test/__cache/${nextKey++}/dns64`
 ): Promise<Result> {
-  return withDns64(question, key, async asked =>
-    asked.type === question.type && asked.name === question.name
-      ? result
-      : lookup(asked)
-  );
+  return withDns64(question, key, result, lookup);
 }
 let nextKey = 0;
 beforeEach(() => resetState());
@@ -200,16 +196,23 @@ describe('withDns64 (RFC 6147)', () => {
   test('keeps what it makes: the lookup is not repeated, and nothing made means nothing kept', async () => {
     const key = 'https://dns.test/__cache/kept/dns64';
     const asked: Question[] = [];
-    const resolveWith = (a: Result) => async (x: Question) => {
-      if (x.type === T.AAAA) {
-        return empty();
-      }
+    const lookupWith = (a: Result) => async (x: Question) => {
       asked.push(x);
       return a;
     };
-    const first = await withDns64(q(), key, resolveWith(answerA(['8.8.8.8'])));
+    const first = await withDns64(
+      q(),
+      key,
+      empty(),
+      lookupWith(answerA(['8.8.8.8']))
+    );
     assert.equal(asked.length, 1);
-    const second = await withDns64(q(), key, resolveWith(answerA(['1.1.1.1'])));
+    const second = await withDns64(
+      q(),
+      key,
+      empty(),
+      lookupWith(answerA(['1.1.1.1']))
+    );
     assert.equal(asked.length, 1, 'served from memory');
     assert.deepEqual(
       [...parseMsg(second.body).answer[0].rdata],
@@ -217,8 +220,8 @@ describe('withDns64 (RFC 6147)', () => {
     );
 
     const other = 'https://dns.test/__cache/nothing/dns64';
-    await withDns64(q(), other, resolveWith(answerA(['10.0.0.1'])));
-    await withDns64(q(), other, resolveWith(answerA(['10.0.0.1'])));
+    await withDns64(q(), other, empty(), lookupWith(answerA(['10.0.0.1'])));
+    await withDns64(q(), other, empty(), lookupWith(answerA(['10.0.0.1'])));
     assert.equal(asked.length, 3, 'nothing was made, so nothing was kept');
   });
 
@@ -232,7 +235,10 @@ describe('withDns64 (RFC 6147)', () => {
     const out = await withDns64(
       q(),
       'https://dns.test/__cache/broken/dns64',
-      async () => broken
+      broken,
+      async () => {
+        throw new Error('unexpected lookup');
+      }
     );
     assert.equal(out, broken);
   });

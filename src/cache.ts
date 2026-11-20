@@ -28,19 +28,15 @@ class LruCache {
 
   constructor(private readonly capacity: number) {}
 
-  /**
-   */
   get(key: string): Entry | undefined {
     const entry = this.entries.get(key);
     if (entry) {
       this.entries.delete(key);
-      this.entries.set(key, entry); // Now the most recently used.
+      this.entries.set(key, entry);
     }
     return entry;
   }
 
-  /**
-   */
   clear(): void {
     this.entries.clear();
   }
@@ -166,7 +162,7 @@ export async function lookupShared(
   if (!(entry.storedAt > 0 && entry.ttl > 0)) {
     return null;
   }
-  localCache.put(key, entry); // Write-through to the faster tier.
+  localCache.put(key, entry);
   return serve(entry, q, Date.now());
 }
 
