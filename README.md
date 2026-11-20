@@ -60,9 +60,9 @@ from data this gateway does not validate.
 1. Put your sources in `blocklists.yaml` (`lists`, plus optional `allow` and `block` rules).
 2. `npm run build-lists` downloads them, keeps plain domains only and writes `public/blocklist.bin`
    (a Ribbon filter: each domain's hash selects some of 64 consecutive slots of `BLOCKLIST_PRECISION_BITS` bits, and
-   the build solves for slot values that XOR to the domain's fingerprint; about 20.05 bits per domain at 20 bits, where
+   the build solves for slot values that XOR to the domain's fingerprint; about 20.03 bits per domain at 20 bits, where
    20 is the least possible; blocking a domain blocks its subdomains). The domains are split into shards of about
-   2048, each solved on its own with the fewest slots that work, which takes a minute or two. A cold isolate only
+   2048, each solved on its own with the fewest slots that work, which takes several minutes. A cold isolate only
    reads the small shard index. The slots are stored bit by bit in columns, so a lookup compares one fingerprint bit
    at a time and stops at the first that differs: about two steps for a name that is not listed.
    A name that is not listed is wrongly blocked with a probability of 2^-20 per suffix looked up (set

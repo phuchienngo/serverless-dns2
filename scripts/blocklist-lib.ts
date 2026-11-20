@@ -51,10 +51,10 @@ export function parseDomain(line: string): string | null {
 
 /**
  * Seeds tried for a shard before it is given one more slot. More seeds find a
- * smaller file and take longer: 4096 saves 0.01 bit per domain for 4 times
- * the build time. The index holds a seed in 16 bits.
+ * smaller file and take longer: 512 is 4 times faster to build, for 0.01 bit
+ * more per domain. The index holds a seed in 16 bits.
  */
-const SEEDS = 512;
+const SEEDS = 4096;
 
 /**
  * Solves one shard for one seed: finds slot values such that every name's
