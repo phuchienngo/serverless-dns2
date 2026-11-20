@@ -6,7 +6,7 @@ node_modules/
 .vercel
 .env*
 
-# Built by `npm run build-lists`
+# Built by `bun run build-lists`
 public/blocklist.bin
 public/rules.json
 public/cloudflare-ips.json

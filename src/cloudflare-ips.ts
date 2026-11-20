@@ -1,6 +1,6 @@
 /**
  * @fileoverview Cloudflare's published IPv4 ranges, which ech.ts uses to tell
- * names served by Cloudflare. `npm run build-lists` downloads the list
+ * names served by Cloudflare. `bun run build-lists` downloads the list
  * (CLOUDFLARE_IPS_URL) into a static asset; each isolate loads it on first use.
  */
 

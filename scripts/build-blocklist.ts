@@ -1,6 +1,6 @@
 /**
  * Builds public/blocklist.bin from blocklists.yaml.
- * Usage: tsx scripts/build-blocklist.ts [config.yaml] [out.bin]
+ * Usage: bun scripts/build-blocklist.ts [config.yaml] [out.bin]
  */
 
 import {mkdir, readFile, writeFile} from 'node:fs/promises';

@@ -1,6 +1,6 @@
 /**
  * Shows how the `block:` / `allow:` rules of blocklists.yaml treat names.
- * The downloaded lists are not checked. Usage: tsx scripts/match-regex.ts name...
+ * The downloaded lists are not checked. Usage: bun scripts/match-regex.ts name...
  */
 
 import {readFile} from 'node:fs/promises';

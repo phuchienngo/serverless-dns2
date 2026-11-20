@@ -5,15 +5,14 @@
   "scripts": {
     "check": "tsc --noEmit && tsc --noEmit -p scripts && tsc --noEmit -p test",
     "format": "prettier --write src",
-    "deploy": "npm run build-lists && wrangler deploy",
-    "build-lists": "tsx scripts/build-blocklist.ts",
-    "test": "tsx --test test/*.test.ts"
+    "deploy": "bun run build-lists && wrangler deploy",
+    "build-lists": "bun scripts/build-blocklist.ts",
+    "test": "bun test --timeout 60000"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261117.1",
     "@types/node": "^26.6.6",
     "prettier": "^3.10.1",
-    "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "wrangler": "^4.164.0",
     "yaml": "^2.9.1"
