@@ -16,6 +16,9 @@ describe('checkPattern', () => {
       '(^|\\.)telemetry-.*\\.example\\.com$',
       '^(.+[_.-])?adse?rv(er?|ice)?s?[0-9]*[_.-]',
       '^(ads|logs)\\.roku\\.com$',
+      '^(ads|logs)',
+      '^\\)+\\.test$',
+      '^[)+*{]+\\.test$',
       'tracking',
       '^[a-z0-9-]{20,}\\.cdn\\.test$',
     ]) {
@@ -34,9 +37,9 @@ describe('checkPattern', () => {
     assert.equal(checkPattern('(?<n>a)\\k<n>'), 'backreference');
   });
 
-  test('rejects the common nested-quantifier forms', () => {
+  test('rejects groups with unbounded or counted repetition', () => {
     for (const p of ['(a+)+$', '(a*)*', '(a+)*b', '(a{2,})+']) {
-      assert.equal(checkPattern(p), 'nested quantifier', p);
+      assert.equal(checkPattern(p), 'repeated group', p);
     }
   });
 
@@ -45,15 +48,10 @@ describe('checkPattern', () => {
     assert.notEqual(checkPattern('[z-a]'), null);
   });
 
-  // Patterns that backtrack badly but pass the check today.
   for (const p of ['^(a|aa)+$', '^(\\w+\\s?)+$', '^(.*a){20}$']) {
-    test(
-      `catastrophic pattern ${p} is not detected yet`,
-      {todo: 'known gap'},
-      () => {
-        assert.notEqual(checkPattern(p), null);
-      }
-    );
+    test(`rejects repeated group in ${p}`, () => {
+      assert.equal(checkPattern(p), 'repeated group');
+    });
   }
 });
 

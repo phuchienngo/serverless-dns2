@@ -42,6 +42,5 @@ Every feature, the standard it follows, where it lives and which test covers it.
 
 ## Known gaps
 
-- `checkPattern` does not detect catastrophic patterns such as `^(a|aa)+$` (3 `todo` tests).
 - Not covered by unit tests: `functions/*.ts` adapters, `Server-Timing`, retry of a failed blocklist load.
 - A DNSSEC-validating client sees a blocked name's NXDOMAIN as unsigned (inherent to filtering).

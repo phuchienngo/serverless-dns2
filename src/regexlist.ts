@@ -1,17 +1,8 @@
-/**
- * @fileoverview Regex blocking rules (`regex:` in blocklists.yaml).
- *
- * JavaScript regexes backtrack, so a bad pattern can take exponential time.
- * Patterns are limited to a safe subset (no lookaround, no backreferences, no
- * nested quantifiers) which makes matching a short domain name linear in
- * practice. The build rejects anything else.
- */
+/** @fileoverview Regex allow and block rules from blocklists.yaml. */
 
 const UNSAFE: Array<[RegExp, string]> = [
   [/\(\?<?[=!]/, 'lookaround'],
   [/\\[1-9]|\\k</, 'backreference'],
-  // A group that ends in a quantifier and is itself quantified: (a+)+ (a*)* ...
-  [/\((?:[^()\\]|\\.)*[+*}]\)[+*{]/, 'nested quantifier'],
 ];
 
 /**
@@ -21,6 +12,23 @@ export function checkPattern(pattern: string): string | null {
   for (const [bad, reason] of UNSAFE) {
     if (bad.test(pattern)) {
       return reason;
+    }
+  }
+  let inClass = false;
+  for (let i = 0; i < pattern.length; i++) {
+    const char = pattern[i];
+    if (char === '\\') {
+      i++;
+    } else if (char === '[') {
+      inClass = true;
+    } else if (char === ']') {
+      inClass = false;
+    } else if (
+      !inClass &&
+      char === ')' &&
+      /[+*{]/.test(pattern.charAt(i + 1))
+    ) {
+      return 'repeated group';
     }
   }
   try {

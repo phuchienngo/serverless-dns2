@@ -4,7 +4,7 @@
  */
 
 import assert from 'node:assert/strict';
-import {afterEach, beforeEach, describe, mock, test} from 'node:test';
+import {afterEach, beforeEach, describe, test} from 'node:test';
 import {
   LOCAL_CACHE_SIZE,
   MIN_CACHE_TTL,
@@ -23,9 +23,11 @@ import {
   parseMsg,
   resetState,
   soaRdata,
+  testClock,
 } from './helpers.js';
 
 const START = 1_700_000_000_000;
+const random = Math.random;
 let counter = 0;
 const uniqueKey = () => `https://dns.test/__cache/${counter++}`;
 const question = (name = 'a.test', o = {}) =>
@@ -40,13 +42,13 @@ const ttlOf = (body: Uint8Array) => parseMsg(body).answer[0].ttl;
 
 beforeEach(() => {
   resetState();
-  mock.timers.enable({apis: ['Date'], now: START});
+  testClock.set(START);
 });
 afterEach(() => {
-  mock.timers.reset();
-  mock.restoreAll();
+  testClock.reset();
+  Math.random = random;
 });
-const tick = (seconds: number) => mock.timers.tick(seconds * 1000);
+const tick = (seconds: number) => testClock.tick(seconds * 1000);
 
 describe('local cache', () => {
   test('resetState empties it', () => {
@@ -158,16 +160,16 @@ describe('local cache', () => {
     const key = uniqueKey();
     store(undefined, key, {body: answer(300), ttl: 300});
     tick(300 - REFRESH_EARLY_MS / 2000);
-    mock.method(Math, 'random', () => 0);
+    Math.random = () => 0;
     assert.equal(lookupLocal(key, question())!.refresh, true);
-    mock.method(Math, 'random', () => 0.9);
+    Math.random = () => 0.9;
     assert.equal(lookupLocal(key, question())!.refresh, false);
   });
 
   test('does not refresh early while the entry is young', () => {
     const key = uniqueKey();
     store(undefined, key, {body: answer(300), ttl: 300});
-    mock.method(Math, 'random', () => 0);
+    Math.random = () => 0;
     assert.equal(lookupLocal(key, question())!.refresh, false);
   });
 

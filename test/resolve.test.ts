@@ -4,7 +4,7 @@
  */
 
 import assert from 'node:assert/strict';
-import {afterEach, beforeEach, describe, mock, test} from 'node:test';
+import {afterEach, beforeEach, describe, test} from 'node:test';
 import {ECH_FRONT_DOMAIN} from '../src/config.js';
 import {parseQuestion} from '../src/query.js';
 import {handle} from '../src/handlers.js';
@@ -21,6 +21,7 @@ import {
   plainOptions,
   resetState,
   soaRdata,
+  testClock,
   type Msg,
   type QueryOptions,
 } from './helpers.js';
@@ -44,6 +45,7 @@ let upstream: ReturnType<typeof mockUpstream>;
 const useUpstream = (
   handler: Parameters<typeof mockUpstream>[0] = q => answerA(q)
 ) => {
+  upstream?.restore();
   upstream = mockUpstream(handler);
   return upstream;
 };
@@ -53,8 +55,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   upstream.restore();
-  mock.timers.reset();
-  mock.restoreAll();
+  testClock.reset();
 });
 
 async function ask(
@@ -755,11 +756,11 @@ describe('client subnet: what comes back for a subnet the client sent', () => {
 
 describe('serve-stale (RFC 8767)', () => {
   test('an expired answer is returned at once with a short TTL and EDE 3, and renewed', async () => {
-    mock.timers.enable({apis: ['Date'], now: 1_800_000_000_000});
+    testClock.set(1_800_000_000_000);
     const name = fresh();
     const first = await ask(name, T.A);
     assert.ok(first.msg.answer[0].ttl <= 300);
-    mock.timers.tick(400_000);
+    testClock.tick(400_000);
 
     const stale = await ask(name, T.A);
     assert.equal(stale.result.stale, true);
@@ -775,7 +776,7 @@ describe('serve-stale (RFC 8767)', () => {
   });
 
   test('a stale NXDOMAIN carries EDE 19, not 3 (RFC 8914)', async () => {
-    mock.timers.enable({apis: ['Date'], now: 1_800_000_000_000});
+    testClock.set(1_800_000_000_000);
     const name = fresh();
     useUpstream(q =>
       makeResponse({
@@ -789,7 +790,7 @@ describe('serve-stale (RFC 8767)', () => {
       })
     );
     await ask(name, T.A);
-    mock.timers.tick(400_000);
+    testClock.tick(400_000);
     const stale = await ask(name, T.A);
     assert.equal(stale.result.stale, true);
     assert.equal(stale.msg.rcode, 3);
@@ -798,10 +799,10 @@ describe('serve-stale (RFC 8767)', () => {
   });
 
   test('a client without EDNS gets the stale answer without the option', async () => {
-    mock.timers.enable({apis: ['Date'], now: 1_800_000_000_000});
+    testClock.set(1_800_000_000_000);
     const name = fresh();
     await ask(name, T.A);
-    mock.timers.tick(400_000);
+    testClock.tick(400_000);
     const stale = await ask(name, T.A, {edns: false});
     assert.equal(stale.msg.optCount, 0);
     assert.equal(stale.msg.answer[0].ttl, 30);

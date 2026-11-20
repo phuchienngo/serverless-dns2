@@ -73,9 +73,10 @@ from data this gateway does not validate.
 
 Rules: `block:` and `allow:` in `blocklists.yaml` take domains (which also cover their subdomains) or `/regex/` rules,
 matched against the lower-case name without a trailing dot (anchor with `^`/`$` yourself). The build rejects lookaround,
-backreferences and the common nested-quantifier forms such as `(a+)+` (not every slow pattern: keep rules simple). `allow` wins over the lists and the block rules,
-so an allowed subdomain works even under a blocked parent. Domains already matched by a block regex are left out of the
-hash list. Try rules with `bun scripts/match-regex.ts name...` (checks the regex and allow rules only).
+backreferences, and `*`, `+`, or `{...}` after a group. Groups can still be optional with `?`. Keep patterns simple to limit
+backtracking. `allow` wins over the lists and the block rules, so an allowed subdomain works even under a blocked
+parent. Domains already matched by a block regex are left out of the hash list. Try rules with
+`bun scripts/match-regex.ts name...` (checks the regex and allow rules only).
 
 CNAME uncloaking (`CNAME_UNCLOAK` in `src/config.ts`): every CNAME target in an answer is also checked against the
 blocklist, so a tracker hidden behind a first-party subdomain (`metrics.site.com -> x.tracker.net`) gets NXDOMAIN.

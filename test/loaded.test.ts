@@ -1,10 +1,11 @@
 /** Values loaded once per isolate (src/loaded.ts). */
 
 import assert from 'node:assert/strict';
-import {afterEach, describe, mock, test} from 'node:test';
+import {afterEach, describe, test} from 'node:test';
 import {Loaded} from '../src/loaded.js';
+import {testClock} from './helpers.js';
 
-afterEach(() => mock.timers.reset());
+afterEach(testClock.reset);
 
 describe('Loaded', () => {
   test('loads once, and callers that ask meanwhile share the load', async () => {
@@ -20,7 +21,7 @@ describe('Loaded', () => {
   });
 
   test('a failure (a throw or a null) gives null, and is not retried at once', async () => {
-    mock.timers.enable({apis: ['Date'], now: 1_000_000});
+    testClock.set(1_000_000);
     let loads = 0;
     let fail: 'throw' | 'null' | null = 'throw';
     const value = new Loaded(
@@ -37,11 +38,11 @@ describe('Loaded', () => {
     assert.equal(await value.get(undefined), null);
     assert.equal(await value.get(undefined), null);
     assert.equal(loads, 1, 'not retried at once');
-    mock.timers.tick(1001);
+    testClock.tick(1001);
     fail = 'null';
     assert.equal(await value.get(undefined), null);
     assert.equal(loads, 2, 'retried after the delay');
-    mock.timers.tick(1001);
+    testClock.tick(1001);
     fail = null;
     assert.equal(await value.get(undefined), 'ok');
     assert.equal(await value.get(undefined), 'ok');
@@ -49,13 +50,13 @@ describe('Loaded', () => {
   });
 
   test('a value with a lifetime is loaded again when it has expired', async () => {
-    mock.timers.enable({apis: ['Date'], now: 1_000_000});
+    testClock.set(1_000_000);
     let loads = 0;
     const value = new Loaded(async () => ++loads, 5000);
     assert.equal(await value.get(undefined), 1);
-    mock.timers.tick(4000);
+    testClock.tick(4000);
     assert.equal(await value.get(undefined), 1);
-    mock.timers.tick(2000);
+    testClock.tick(2000);
     assert.equal(await value.get(undefined), 2);
   });
 

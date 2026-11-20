@@ -4,7 +4,6 @@
  * code with itself.
  */
 
-import {mock} from 'node:test';
 import {UPSTREAM} from '../src/config.js';
 import {resetBlocklist} from '../src/blocklist.js';
 import {resetCache} from '../src/cache.js';
@@ -416,7 +415,7 @@ export function mockUpstream(
 ): {calls: UpstreamCall[]; restore: () => void} {
   const calls: UpstreamCall[] = [];
   const original = globalThis.fetch;
-  const fake = mock.fn(async (input: unknown, init?: RequestInit) => {
+  const fake = async (input: unknown, init?: RequestInit) => {
     const url = String(input);
     if (url !== UPSTREAM) {
       return original(input as string, init);
@@ -430,7 +429,7 @@ export function mockUpstream(
     return new Response(body, {
       headers: {'content-type': 'application/dns-message'},
     });
-  });
+  };
   globalThis.fetch = fake as unknown as typeof fetch;
   return {calls, restore: () => void (globalThis.fetch = original)};
 }
@@ -439,6 +438,20 @@ export function mockUpstream(
 export function plainOptions(extra: Record<string, unknown> = {}) {
   return {env: {}, ip: null, host: 'dns.test', ...extra} as never;
 }
+
+const systemNow = Date.now;
+
+export const testClock = {
+  set(now: number): void {
+    Date.now = () => now;
+  },
+  tick(ms: number): void {
+    testClock.set(Date.now() + ms);
+  },
+  reset(): void {
+    Date.now = systemNow;
+  },
+};
 
 /** Forgets everything that the gateway keeps in memory between requests. */
 export function resetState(): void {
