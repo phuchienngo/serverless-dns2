@@ -48,6 +48,24 @@ const post = (body: Uint8Array | string, type = 'application/dns-message') =>
 const get = (path: string, h = handle) => h(new Request(`${B}${path}`), ctx);
 
 describe('/dns-query (RFC 8484)', () => {
+  test('truncated upstream packets get the same SERVFAIL and TTL in wire and JSON', async () => {
+    upstream.restore();
+    upstream = mockUpstream(q => {
+      const {name, type} = q.question[0];
+      const body = makeResponse({qname: name, qtype: type, opt: false});
+      return body.subarray(0, body.length - 1);
+    });
+    const wire = await post(makeQuery(fresh(), T.A));
+    assert.equal(wire.headers.get('cache-control'), 'private, max-age=5');
+    const message = parseMsg(new Uint8Array(await wire.arrayBuffer()));
+    assert.equal(message.rcode, 2);
+    assert.equal(message.question.length, 1);
+
+    const json = await get(`/resolve?name=${fresh()}`, handleJson);
+    assert.equal(json.headers.get('cache-control'), 'private, max-age=5');
+    assert.equal(((await json.json()) as {Status: number}).Status, 2);
+  });
+
   test('POST returns application/dns-message', async () => {
     const res = await post(makeQuery(fresh(), T.A, {id: 5}));
     assert.equal(res.status, 200);

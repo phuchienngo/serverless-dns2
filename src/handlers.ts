@@ -229,7 +229,7 @@ export async function handleJson(
     cd: flag(params, 'cd'),
   });
 
-  const {result, first} = await resolveOrFail(question, options);
+  let {result, first} = await resolveOrFail(question, options);
   if (params.get('ct') === 'application/dns-message') {
     return wireResponse(result, first);
   }
@@ -238,17 +238,8 @@ export async function handleJson(
   try {
     json = toJson(result.body);
   } catch {
-    // The upstream sent something that does not parse.
-    json = {
-      Status: 2,
-      TC: false,
-      RD: true,
-      RA: true,
-      AD: false,
-      CD: false,
-      Question: [{name: name.replace(/\.$/, '') + '.', type}],
-      Comment: 'bad upstream response',
-    };
+    result = upstreamFailure(question);
+    json = toJson(result.body);
   }
   const headers = responseHeaders(
     'application/json; charset=UTF-8',

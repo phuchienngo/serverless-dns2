@@ -12,7 +12,14 @@ import {
   STALE_TTL,
 } from './config.js';
 import {RCODE_NOERROR, RCODE_NXDOMAIN, TYPE_OPT} from './constants.js';
-import {HEADER_BYTES, isTruncated, rcodeOf, readRecords, u16} from './wire.js';
+import {
+  HEADER_BYTES,
+  isTruncated,
+  questionCount,
+  rcodeOf,
+  readRecords,
+  u16,
+} from './wire.js';
 import type {Question, Result} from './types.js';
 
 /** A cached response. `storedAt` is in milliseconds, `ttl` in seconds. */
@@ -200,6 +207,7 @@ export function store(
   const rcode = rcodeOf(body);
   if (
     (rcode !== RCODE_NOERROR && rcode !== RCODE_NXDOMAIN) ||
+    questionCount(body) !== 1 ||
     isTruncated(body)
   ) {
     return;

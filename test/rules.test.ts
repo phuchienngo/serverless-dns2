@@ -1,13 +1,28 @@
 /** Block and allow rules (src/regexlist.ts). */
 
 import assert from 'node:assert/strict';
+import {execFileSync} from 'node:child_process';
 import {describe, test} from 'node:test';
+import {fileURLToPath, URL} from 'node:url';
 import {
   checkPattern,
   compilePatterns,
   domainPattern,
   splitRules,
 } from '../src/regexlist.js';
+
+test('match-regex checks mixed-case absolute names like the Worker', () => {
+  const script = fileURLToPath(
+    new URL('../scripts/match-regex.ts', import.meta.url)
+  );
+  const names = ['telemetry.example.com', 'Telemetry.Example.COM.'];
+  const output = execFileSync(process.execPath, [script, ...names], {
+    encoding: 'utf8',
+  });
+  const [plain, absolute] = output.trimEnd().split('\n');
+  assert.match(plain, /: blocked by /);
+  assert.equal(absolute, plain.replace(names[0], names[1]));
+});
 
 describe('checkPattern', () => {
   test('accepts ordinary patterns', () => {

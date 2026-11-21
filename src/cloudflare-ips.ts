@@ -19,8 +19,8 @@ export function loadCloudflareRanges(v4: string[]): void {
 }
 
 /** @return Cloudflare's IPv4 ranges. */
-export function getCloudflareRanges(): Promise<Ipv4Block[]> {
-  return Promise.resolve(blocks);
+export function getCloudflareRanges(): readonly Ipv4Block[] {
+  return blocks;
 }
 
 /** Forgets the ranges (for tests). */

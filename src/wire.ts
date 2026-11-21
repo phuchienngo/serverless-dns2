@@ -58,6 +58,11 @@ export function lowerAscii(s: string): string {
   return UPPER.test(s) ? s.replace(/[A-Z]/g, c => c.toLowerCase()) : s;
 }
 
+/** The lower-case DNS name used for lookups, without its final root dot. */
+export function normalizeName(name: string): string {
+  return lowerAscii(name.replace(/\.$/, ''));
+}
+
 /**
  * @param name A domain name such as `example.com`.
  * @return The name in DNS wire format.
@@ -151,19 +156,26 @@ const SECTIONS: Section[] = ['answer', 'authority', 'additional'];
  * Lists the records of a message, in order, from the answer section up to and
  * including `last`. All other readers and editors of the record sections are
  * built on this.
- * @throws If a record runs past the end of the message.
+ * @throws If there is more than one question or a section runs past the end.
  */
 export function readRecords(
   resp: Uint8Array,
   last: Section = 'additional'
 ): DnsRecord[] {
   const view = new DataView(resp.buffer, resp.byteOffset, resp.byteLength);
-  const counts = SECTIONS.slice(0, SECTIONS.indexOf(last) + 1).map(
-    (section, i): [Section, number] => [section, view.getUint16(6 + 2 * i)]
-  );
-  let offset = skipName(resp, HEADER_BYTES) + 4; // Skip the question.
+  const questions = questionCount(resp);
+  if (questions > 1) {
+    throw new Error('multiple questions');
+  }
+  let offset = questions ? skipName(resp, HEADER_BYTES) + 4 : HEADER_BYTES;
+  if (offset > resp.length) {
+    throw new Error('short question');
+  }
   const records: DnsRecord[] = [];
-  for (const [section, count] of counts) {
+  const lastSection = SECTIONS.indexOf(last);
+  for (let index = 0; index <= lastSection; index++) {
+    const section = SECTIONS[index];
+    const count = view.getUint16(6 + 2 * index);
     for (let i = 0; i < count; i++) {
       const name = offset;
       const start = skipName(resp, offset);
@@ -266,6 +278,10 @@ export function optOptions(
 /** @return Whether the message has the TC (truncated) flag. */
 export function isTruncated(resp: Uint8Array): boolean {
   return (resp[2] & FLAG_TC) !== 0;
+}
+
+export function questionCount(msg: Uint8Array): number {
+  return (msg[4] << 8) | msg[5];
 }
 
 /** @return The response code of a message, without the bits held in OPT. */

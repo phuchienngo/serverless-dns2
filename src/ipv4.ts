@@ -12,7 +12,10 @@ function toNumber(a: ArrayLike<number>): number {
  * @param a Four bytes.
  * @return Whether the address is in one of the blocks.
  */
-export function inBlocks(a: ArrayLike<number>, blocks: Ipv4Block[]): boolean {
+export function inBlocks(
+  a: ArrayLike<number>,
+  blocks: readonly Ipv4Block[]
+): boolean {
   const n = toNumber(a);
   return blocks.some(([base, prefix]) => {
     // A shift by 32 does nothing in JavaScript, so /0 needs its own mask.

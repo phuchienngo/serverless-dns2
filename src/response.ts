@@ -22,12 +22,12 @@ import {
   QUESTION_POINTER,
   RCODE_MASK,
   encodeName,
-  lowerAscii,
+  normalizeName,
   optRecords,
   parseAnswers,
-  parseAuthority,
   readName,
   readOptions,
+  readRecords,
   u16,
   u32,
   utf8,
@@ -336,7 +336,7 @@ export function cnameTargets(
   try {
     return (answers ?? parseAnswers(resp))
       .filter(a => a.type === TYPE_CNAME)
-      .map(a => lowerAscii(readName(resp, a.data).name.replace(/\.$/, '')));
+      .map(a => normalizeName(readName(resp, a.data).name));
   } catch {
     return []; // Not a message we can read: no targets.
   }
@@ -346,31 +346,22 @@ export function cnameTargets(
  * @return Smallest answer TTL in seconds (at most an hour), or 30
  *     when there is no answer or the message cannot be read.
  */
-export function minTtl(resp: Uint8Array): number {
+export function minTtl(resp: Uint8Array, records?: readonly DnsRecord[]): number {
   try {
-    const answers = parseAnswers(resp);
-    // A CNAME chain that ends in NXDOMAIN or NODATA has the SOA of the
-    // negative answer too, which limits it (RFC 2308 5).
-    const negative = negativeTtl(resp);
-    if (answers.length) {
-      return Math.min(...answers.map(a => a.ttl), negative ?? MAX_TTL, MAX_TTL);
+    let ttl = MAX_TTL;
+    let hasTtl = false;
+    for (const record of records ?? readRecords(resp, 'authority')) {
+      if (record.section === 'answer' && record.type !== TYPE_OPT) {
+        ttl = Math.min(ttl, record.ttl);
+        hasTtl = true;
+      } else if (record.section === 'authority' && record.type === TYPE_SOA) {
+        // A negative answer's SOA may also limit a preceding CNAME chain.
+        const view = new DataView(resp.buffer, resp.byteOffset, resp.byteLength);
+        return Math.min(ttl, record.ttl, view.getUint32(record.end - 4));
+      }
     }
-    return Math.min(negative ?? DEFAULT_TTL, MAX_TTL);
+    return hasTtl ? ttl : DEFAULT_TTL;
   } catch {
     return DEFAULT_TTL; // Not a message we can read.
   }
-}
-
-/**
- * @return How long an empty or NXDOMAIN answer may be cached (RFC 2308): the
- *     smaller of the SOA record's TTL and its MINIMUM field; null if the
- *     authority section has no SOA record.
- */
-function negativeTtl(resp: Uint8Array): number | null {
-  const soa = parseAuthority(resp).find(r => r.type === TYPE_SOA);
-  if (!soa) {
-    return null;
-  }
-  const view = new DataView(resp.buffer, resp.byteOffset, resp.byteLength);
-  return Math.min(soa.ttl, view.getUint32(soa.end - 4));
 }

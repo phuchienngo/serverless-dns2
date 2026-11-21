@@ -20,7 +20,9 @@ import {
   encodeName,
   latin1,
   lowerAscii,
+  normalizeName,
   optRecords,
+  questionCount,
   readOptions,
   u16,
 } from './wire.js';
@@ -103,7 +105,7 @@ export function parseQuestion(buf: Uint8Array): Question {
   const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
   const isResponse = buf[2] & FLAG_QR_OR_RA;
   const opcode = (buf[2] >> 3) & 15;
-  const questions = view.getUint16(4);
+  const questions = questionCount(buf);
   if (!isResponse && opcode === 0 && questions > 1) {
     throw new MultipleQuestionsError('multiple questions');
   }
@@ -172,7 +174,7 @@ export function makeQuestion(
 ): Question {
   return {
     id: 0,
-    name: lowerAscii(name.replace(/\.$/, '')),
+    name: normalizeName(name),
     type,
     raw: [...encodeName(name), ...u16(type), ...u16(CLASS_IN)],
     edns: false,

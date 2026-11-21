@@ -15,7 +15,7 @@ import {
   TYPE_SVCB,
 } from './constants.js';
 import {minTtl, respond, respondNegative} from './response.js';
-import {QUESTION_POINTER, parseAnswers, rcodeOf} from './wire.js';
+import {QUESTION_POINTER, rcodeOf, type DnsRecord} from './wire.js';
 import type {Question, Result} from './types.js';
 
 /**
@@ -47,9 +47,15 @@ export function redirectedHints(q: Question): Result | null {
  * @param resp The upstream response for the redirect target.
  * @param q The question the client asked.
  */
-export function redirectedResult(resp: Uint8Array, q: Question): Result {
-  const records = parseAnswers(resp)
-    .filter(a => a.type === TYPE_A || a.type === TYPE_AAAA)
+export function redirectedResult(
+  resp: Uint8Array,
+  q: Question,
+  records: readonly DnsRecord[]
+): Result {
+  const addresses = records
+    .filter(
+      a => a.section === 'answer' && (a.type === TYPE_A || a.type === TYPE_AAAA)
+    )
     .map(a => [...QUESTION_POINTER, ...resp.subarray(a.start, a.end)]);
-  return {body: respond(q, rcodeOf(resp), records), ttl: minTtl(resp)};
+  return {body: respond(q, rcodeOf(resp), addresses), ttl: minTtl(resp, records)};
 }

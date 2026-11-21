@@ -5,6 +5,11 @@
 
 import {BLOCKLIST} from '../src/config.js';
 import {checkPattern, domainPattern, splitRules} from '../src/regexlist.js';
+import {normalizeName} from '../src/wire.js';
+
+function compileRule(pattern: string, label = pattern) {
+  return {regex: new RegExp(pattern), label};
+}
 
 function main() {
   const block = splitRules(BLOCKLIST.block);
@@ -19,24 +24,25 @@ function main() {
       throw new Error(`regex ${pattern}: ${problem}`);
     }
   }
-  const matching = (patterns: string[], name: string) =>
-    patterns.filter(p => new RegExp(p).test(name));
-  for (const name of process.argv.slice(2)) {
-    const allowed = matching(allowPatterns, name);
-    const blocked = [
-      ...matching(block.patterns, name),
-      ...block.domains
-        .filter(
-          d => domainPattern(d) && new RegExp(domainPattern(d)).test(name)
-        )
-        .map(d => `domain ${d}`),
-    ];
+  const allowRules = allowPatterns.map(pattern => compileRule(pattern));
+  const blockRules = [
+    ...block.patterns.map(pattern => compileRule(pattern)),
+    ...block.domains.map(domain =>
+      compileRule(domainPattern(domain), `domain ${domain}`)
+    ),
+  ];
+  const matching = (rules: ReturnType<typeof compileRule>[], name: string) =>
+    rules.filter(({regex}) => regex.test(name)).map(({label}) => label);
+  for (const input of process.argv.slice(2)) {
+    const name = normalizeName(input);
+    const allowed = matching(allowRules, name);
+    const blocked = matching(blockRules, name);
     const verdict = allowed.length
       ? `allowed by ${allowed.join('  ')}`
       : blocked.length
         ? `blocked by ${blocked.join('  ')}`
         : 'no match (the downloaded lists are not checked)';
-    console.log(`${name}: ${verdict}`);
+    console.log(`${input}: ${verdict}`);
   }
 }
 

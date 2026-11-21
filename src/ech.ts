@@ -38,10 +38,12 @@ const SYNTHETIC_TTL = 300;
 /** The shared Cloudflare ECHConfigList, asked for at most once an hour. */
 const echConfig = new Loaded<void, Uint8Array>(async () => {
   const question = [...encodeName(ECH_FRONT_DOMAIN), ...u16(TYPE_HTTPS), 0, 1];
-  const resp = await queryUpstream(question, null);
-  for (const record of parseAnswers(resp)) {
+  const {body, records} = await queryUpstream(question, null);
+  for (const record of records) {
     const value =
-      record.type === TYPE_HTTPS && svcParam(resp, record, SVCPARAM_ECH);
+      record.section === 'answer' &&
+      record.type === TYPE_HTTPS &&
+      svcParam(body, record, SVCPARAM_ECH);
     if (value) {
       return value.slice();
     }
@@ -58,21 +60,16 @@ export function resetEch(): void {
 async function behindCloudflare(
   name: string,
   ecs: number[] | null,
-  ranges: Promise<Ipv4Block[] | null>
+  ranges: readonly Ipv4Block[]
 ): Promise<boolean> {
   const question = [...encodeName(name), ...u16(TYPE_A), 0, 1];
-  const [resp, blocks] = await Promise.all([
-    queryUpstream(question, ecs),
-    ranges,
-  ]);
-  return (
-    !!blocks &&
-    parseAnswers(resp).some(
-      a =>
-        a.type === TYPE_A &&
-        a.length === 4 &&
-        inBlocks(resp.subarray(a.data, a.data + 4), blocks)
-    )
+  const {body, records} = await queryUpstream(question, ecs);
+  return records.some(
+    a =>
+      a.section === 'answer' &&
+      a.type === TYPE_A &&
+      a.length === 4 &&
+      inBlocks(body.subarray(a.data, a.end), ranges)
   );
 }
 
@@ -83,13 +80,11 @@ async function behindCloudflare(
 interface EchProbe {
   cloudflare: Promise<boolean>;
   config: Promise<Uint8Array | null>;
-  ranges: Promise<Ipv4Block[] | null>;
+  ranges: readonly Ipv4Block[];
 }
 
 /**
- * Starts the lookups addEch may need: is the name on Cloudflare (an A query),
- * the ECH key (usually already memoized) and Cloudflare's ranges (loaded
- * only for an HTTPS query).
+ * Starts the A lookup and ECH config lookup for an HTTPS query.
  * @return null for other types or if the client requests DNSSEC records.
  */
 export function startEchProbe(
@@ -99,11 +94,14 @@ export function startEchProbe(
   if (q.type !== TYPE_HTTPS || q.dnssecOk) {
     return null;
   }
-  const loaded = getCloudflareRanges().catch(() => null);
+  const ranges = getCloudflareRanges();
+  if (!ranges.length) {
+    return null;
+  }
   return {
-    cloudflare: behindCloudflare(q.name, ecs, loaded).catch(() => false),
+    cloudflare: behindCloudflare(q.name, ecs, ranges).catch(() => false),
     config: echConfig.get(),
-    ranges: loaded,
+    ranges,
   };
 }
 
@@ -114,7 +112,7 @@ export function startEchProbe(
 function hintedCloudflare(
   body: Uint8Array,
   records: ReturnType<typeof parseAnswers>,
-  blocks: Ipv4Block[]
+  blocks: readonly Ipv4Block[]
 ): boolean | null {
   let hinted: boolean | null = null;
   for (const record of records) {
@@ -143,10 +141,6 @@ export async function addEch(
     return result;
   }
   try {
-    const blocks = await probe.ranges;
-    if (!blocks) {
-      return result;
-    }
     const {body} = result;
     const records = parseAnswers(body).filter(r => r.type === TYPE_HTTPS);
     if (records.some(r => svcParam(body, r, SVCPARAM_ECH))) {
@@ -157,7 +151,7 @@ export async function addEch(
       return result;
     }
     const onCloudflare =
-      hintedCloudflare(body, records, blocks) ?? (await probe.cloudflare);
+      hintedCloudflare(body, records, probe.ranges) ?? (await probe.cloudflare);
     const config = onCloudflare ? await probe.config : null;
     if (!config) {
       return result;

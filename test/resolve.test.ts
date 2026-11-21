@@ -450,6 +450,16 @@ describe('forwarding to the upstream', () => {
     assert.equal(upstream.calls.length, 2);
   });
 
+  test('a malformed upstream reply loses to a complete hedged reply', async () => {
+    useUpstream(q => {
+      const body = answerA(q);
+      return upstream.calls.length === 1 ? body.subarray(0, -1) : body;
+    });
+    const {msg} = await ask(fresh(), T.A);
+    assert.deepEqual([...msg.answer[0].rdata], ip4('198.51.100.7'));
+    assert.equal(upstream.calls.length, 2);
+  });
+
   test('a fast upstream answer cancels the hedge timer', async () => {
     const setTimer = globalThis.setTimeout;
     let fired = false;
@@ -668,6 +678,18 @@ describe('client subnet: a server that refuses it (RFC 7871 7.1.3)', () => {
       upstream.calls.map(call => hasEcs(call.query)),
       [true, false]
     );
+  });
+
+  test('a header-only ECS refusal still selects the fallback', async () => {
+    useUpstream(q => {
+      if (!hasEcs(q)) return answerA(q);
+      const header = refuseEcs(q).slice(0, 12);
+      header.fill(0, 4);
+      return header;
+    });
+    const {msg} = await ask(fresh(), T.A, {}, {ip: '203.0.113.77'});
+    assert.equal(msg.rcode, 0);
+    assert.equal(msg.answer.length, 1);
   });
 
   test('starts the non-ECS lookup before the ECS refusal arrives', async () => {
@@ -1050,6 +1072,7 @@ describe('best-effort ECH for Cloudflare-hosted names', () => {
     cloudflareUpstream();
     const {msg} = await ask('cf-none.example.com', T.HTTPS);
     assert.equal(msg.answer.length, 0);
+    assert.equal(upstream.calls.length, 1);
   });
 });
 

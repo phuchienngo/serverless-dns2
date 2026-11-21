@@ -12,10 +12,24 @@ import {
 } from './config.js';
 import {buildQuery} from './query.js';
 import {RCODE_REFUSED} from './constants.js';
-import {encodeName, HEADER_BYTES, rcodeOf, u16} from './wire.js';
+import {
+  encodeName,
+  FLAG_QR_OR_RA,
+  HEADER_BYTES,
+  questionCount,
+  rcodeOf,
+  readRecords,
+  u16,
+  type DnsRecord,
+} from './wire.js';
 import {redirectedResult, redirectTarget} from './redirects.js';
 import {minTtl} from './response.js';
 import type {Question, Result} from './types.js';
+
+interface UpstreamReply {
+  body: Uint8Array;
+  records: DnsRecord[];
+}
 
 /**
  * Sends a query to one DoH resolver.
@@ -24,7 +38,7 @@ async function post(
   url: string,
   wire: Uint8Array,
   controller: AbortController
-): Promise<Uint8Array> {
+): Promise<UpstreamReply> {
   const timer = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
   try {
     const response = await fetch(url, {
@@ -40,10 +54,10 @@ async function post(
       throw new Error(`upstream ${response.status}`);
     }
     const body = new Uint8Array(await response.arrayBuffer());
-    if (body.length < HEADER_BYTES) {
-      throw new Error('short upstream response');
+    if (body.length < HEADER_BYTES || (body[2] & FLAG_QR_OR_RA) === 0) {
+      throw new Error('bad upstream response');
     }
-    return body;
+    return {body, records: readRecords(body)};
   } finally {
     clearTimeout(timer);
   }
@@ -63,7 +77,7 @@ function recordLatency(started: number): void {
  * if set, else to UPSTREAM, usually on the same connection), and the first
  * answer wins.
  */
-async function forward(wire: Uint8Array): Promise<Uint8Array> {
+async function forward(wire: Uint8Array): Promise<UpstreamReply> {
   const primary = new AbortController();
   let hedged: AbortController | undefined;
   const delay = Math.min(
@@ -73,16 +87,16 @@ async function forward(wire: Uint8Array): Promise<Uint8Array> {
   const started = performance.now();
   const preferred = post(UPSTREAM, wire, primary);
   let timer: ReturnType<typeof setTimeout> | null = null;
-  const backup = new Promise<Uint8Array>((resolve, reject) => {
+  const backup = new Promise<UpstreamReply>((resolve, reject) => {
     timer = setTimeout(() => {
       hedged = new AbortController();
       post(UPSTREAM_BACKUP || UPSTREAM, wire, hedged).then(resolve, reject);
     }, delay);
   });
   try {
-    const body = await Promise.any([preferred, backup]);
+    const reply = await Promise.any([preferred, backup]);
     recordLatency(started);
-    return body;
+    return reply;
   } finally {
     clearTimeout(timer);
     primary.abort(); // Cancel the loser.
@@ -113,7 +127,7 @@ export async function queryUpstream(
   question: number[],
   ecs: number[] | null,
   flags?: QueryFlags
-): Promise<Uint8Array> {
+): Promise<UpstreamReply> {
   const wire = buildQuery(question, ecs, flags);
   if (!ecs) {
     return forward(wire);
@@ -124,9 +138,9 @@ export async function queryUpstream(
   const fallback = post(UPSTREAM, buildQuery(question, null, flags), controller);
   void fallback.catch(() => {});
   try {
-    const body = await preferred;
+    const reply = await preferred;
     recordLatency(started);
-    return rcodeOf(body) === RCODE_REFUSED ? await fallback : body;
+    return rcodeOf(reply.body) === RCODE_REFUSED ? await fallback : reply;
   } finally {
     controller.abort();
   }
@@ -143,11 +157,12 @@ export async function askUpstream(
   const target = redirectTarget(q);
   if (target) {
     const question = [...encodeName(target), ...u16(q.type), 0, 1];
-    return redirectedResult(await queryUpstream(question, ecs, flags), q);
+    const {body, records} = await queryUpstream(question, ecs, flags);
+    return redirectedResult(body, q, records);
   }
-  const body = await queryUpstream(q.raw, ecs, flags);
+  const {body, records} = await queryUpstream(q.raw, ecs, flags);
   body.set(u16(q.id), 0);
-  return {body, ttl: minTtl(body)};
+  return {body, ttl: minTtl(body, records)};
 }
 
 /** Queries in flight, so identical concurrent ones share one upstream call. */
@@ -165,7 +180,9 @@ export function resetUpstream(): void {
 function retarget({body, ttl}: Result, q: Question): Result {
   const copy = body.slice();
   copy.set(u16(q.id), 0);
-  copy.set(q.raw, HEADER_BYTES);
+  if (questionCount(body) === 1) {
+    copy.set(q.raw, HEADER_BYTES);
+  }
   return {body: copy, ttl};
 }
 
