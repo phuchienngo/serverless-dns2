@@ -92,8 +92,12 @@ function classify(entry: Entry, now: number): Freshness {
  * left in the cache (or a short one for a stale answer).
  * @param now Milliseconds.
  */
-function serve(entry: Entry, q: Question, now: number): Hit | null {
-  const freshness = classify(entry, now);
+function serve(
+  entry: Entry,
+  q: Question,
+  now: number,
+  freshness = classify(entry, now)
+): Hit | null {
   if (
     freshness === 'expired' ||
     entry.body.length < HEADER_BYTES + q.raw.length
@@ -137,6 +141,24 @@ function serve(entry: Entry, q: Question, now: number): Hit | null {
 export function lookupLocal(key: string, q: Question): Hit | null {
   const entry = localCache.get(key);
   return entry ? serve(entry, q, Date.now()) : null;
+}
+
+/** Checks freshness once and defers preparing the answer until it is used. */
+export function lookupFreshLocal(
+  key: string,
+  q: Question
+): (() => Result | null) | null {
+  const entry = localCache.get(key);
+  if (!entry || classify(entry, Date.now()) !== 'fresh') {
+    return null;
+  }
+  const expiresAt = entry.storedAt + entry.ttl * 1000;
+  return () => {
+    const now = Date.now();
+    return now < expiresAt
+      ? (serve(entry, q, now, 'fresh')?.result ?? null)
+      : null;
+  };
 }
 
 /**

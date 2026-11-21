@@ -74,6 +74,18 @@ describe('/dns-query (RFC 8484)', () => {
     assert.equal(second.headers.get('x-cache'), 'HIT');
   });
 
+  test('Server-Timing waits for the upstream answer after a cache miss', async () => {
+    upstream.restore();
+    upstream = mockUpstream(async q => {
+      await new Promise(resolve => setTimeout(resolve, 30));
+      return makeResponse({qname: q.question[0].name, qtype: T.A});
+    });
+    const res = await post(makeQuery(fresh(), T.A));
+    const timing = res.headers.get('server-timing');
+    const duration = Number(timing?.match(/first;dur=([\d.]+)/)?.[1]);
+    assert.ok(duration >= 20, `first was ${duration} ms`);
+  });
+
   test('the same question over POST and GET share the cache', async () => {
     const wire = makeQuery(fresh(), T.A);
     await post(wire);
@@ -216,7 +228,7 @@ describe('a client that asks not to be located (ECS source prefix 0)', () => {
 
   test('no subnet of the connecting IP goes upstream: source prefix 0 does', async () => {
     await send({family: 2, prefix: 0, address: []});
-    assert.deepEqual(subnetsSent(), [[0, 2, 0, 0]]);
+    assert.deepEqual(subnetsSent(), [[0, 2, 0, 0], []]);
   });
 
   test('a query with no ECS still gets its connecting IP as /24', async () => {

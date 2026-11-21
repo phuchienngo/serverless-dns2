@@ -5,7 +5,7 @@
 
 import assert from 'node:assert/strict';
 import {afterEach, beforeEach, describe, test} from 'node:test';
-import {ECH_FRONT_DOMAIN} from '../src/config.js';
+import {ECH_FRONT_DOMAIN, HEDGE_MAX_MS} from '../src/config.js';
 import {parseQuestion} from '../src/query.js';
 import {handle} from '../src/handlers.js';
 import {loadCloudflareRanges} from '../src/cloudflare-ips.js';
@@ -676,6 +676,23 @@ describe('client subnet: a server that refuses it (RFC 7871 7.1.3)', () => {
     assert.equal((await answer).msg.answer[0].ttl, 300);
   });
 
+  test('a slow ECS lookup still sends just one request per variant', async () => {
+    let release!: () => void;
+    const preferred = new Promise<void>(resolve => (release = resolve));
+    useUpstream(async q => {
+      if (hasEcs(q)) await preferred;
+      return answerA(q);
+    });
+    const answer = ask(fresh(), T.A, {}, {ip: '203.0.113.77'});
+    await new Promise(resolve => setTimeout(resolve, HEDGE_MAX_MS + 20));
+    release();
+    await answer;
+    assert.deepEqual(
+      upstream.calls.map(call => hasEcs(call.query)),
+      [true, false]
+    );
+  });
+
   test('and the answer is cached for that subnet', async () => {
     useUpstream(refuseEcs);
     const name = fresh();
@@ -726,11 +743,11 @@ describe('client subnet: a client that asks not to be located (RFC 7871 7.1.2)',
     const name = fresh();
     await ask(name, T.A, {}, {ip: '203.0.113.1'});
     await ask(name, T.A, {}, {ip: '203.0.113.1', ecs: none});
-    assert.equal(upstream.calls.length, 3, 'not served from the /24 entry');
+    assert.equal(upstream.calls.length, 4, 'not served from the /24 entry');
     await ask(name, T.A, {}, {ip: '198.51.100.9', ecs: none});
-    assert.equal(upstream.calls.length, 3, 'the same entry for any IP');
+    assert.equal(upstream.calls.length, 4, 'the same entry for any IP');
     await ask(name, T.A, {}, {ecs: null});
-    assert.equal(upstream.calls.length, 4, 'not shared with "no ECS"');
+    assert.equal(upstream.calls.length, 5, 'not shared with "no ECS"');
   });
 
   test('the answer carries the upstream ECS option, scope 0', async () => {
@@ -1170,6 +1187,38 @@ describe('DNS64 memo', () => {
       [...first.msg.answer[0].rdata]
     );
     assert.ok(second.msg.answer[0].ttl <= first.msg.answer[0].ttl);
+  });
+
+  test('decides whether to refresh a cached synthesis once per query', async () => {
+    useUpstream(q => {
+      const {name, type} = q.question[0];
+      return makeResponse({
+        qname: name,
+        qtype: type,
+        answer:
+          type === T.A ? [{type, ttl: 120, rdata: ip4('93.184.216.34')}] : [],
+        authority:
+          type === T.A ? [] : [{type: T.SOA, ttl: 900, rdata: soaRdata(300)}],
+      });
+    });
+    const name = fresh();
+    testClock.set(1_700_000_000_000);
+    await ask(name, T.AAAA, {}, {dns64: true});
+    testClock.tick(115_000);
+
+    const random = Math.random;
+    let decisions = 0;
+    Math.random = () => {
+      decisions++;
+      return 0.9;
+    };
+    try {
+      const {msg} = await ask(name, T.AAAA, {}, {dns64: true});
+      assert.equal(msg.answer[0].ttl, 5);
+      assert.equal(decisions, 1);
+    } finally {
+      Math.random = random;
+    }
   });
 });
 

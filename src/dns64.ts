@@ -3,7 +3,7 @@
  * clients that reach IPv4-only hosts through a NAT64 gateway.
  */
 
-import {lookupLocal, store} from './cache.js';
+import {lookupFreshLocal, store} from './cache.js';
 import {DNS64_PREFIX} from './config.js';
 import {
   RCODE_NOERROR,
@@ -90,24 +90,6 @@ function embeddedAddress(name: string): number[] | null {
 
 function addressQuestion(q: Question): Question {
   return makeQuestion(q.name, TYPE_A, {dnssecOk: q.dnssecOk, cd: q.cd});
-}
-
-/** Starts the A lookup while the AAAA answer is pending (RFC 6147 5.1.8). */
-export function prefetchDns64A(
-  q: Question,
-  key: string,
-  lookup: (q: Question) => Promise<Result>
-): Promise<Result> | undefined {
-  if (
-    q.type !== TYPE_AAAA ||
-    (q.dnssecOk && !q.cd) ||
-    lookupLocal(key, q)?.refresh === false
-  ) {
-    return undefined;
-  }
-  const pending = lookup(addressQuestion(q));
-  void pending.catch(() => {});
-  return pending;
 }
 
 /** The AAAA answer made from the A records of the name (RFC 6147 5.1). */
@@ -199,48 +181,48 @@ const SYNTHESIZERS: Record<number, Synthesizer> = {
 };
 
 /**
- * @return What makes the answer for `q`, if the upstream has none of its own.
- *     Not for a client that validates DNSSEC (DO without CD, RFC 6147 5.5):
- *     it would reject what is made.
- */
-function synthesizerFor(q: Question, result: Result): Synthesizer | null {
-  const synthesizer = SYNTHESIZERS[q.type];
-  if (
-    !synthesizer ||
-    (q.dnssecOk && !q.cd) ||
-    !synthesizer.rcodes.includes(rcodeOf(result.body)) ||
-    parseAnswers(result.body).some(r => r.type === q.type)
-  ) {
-    return null;
-  }
-  return synthesizer;
-}
-
-/**
  * Synthesizes an answer with DNS64 (RFC 6147) when the original answer lacks
  * data: AAAA records from A records, or PTR records for the prefix. AAAA
  * records are owned by the question name (a CNAME chain is flattened), their
  * TTL is the smaller of the A record's and the AAAA answer's (5.1.7). What is
  * made is kept in memory under `key`, so the lookup is not repeated.
+ * Starts the A lookup while AAAA is pending (5.1.8). DO without CD skips
+ * synthesis because a validating client would reject it (5.5).
  * DNS64 is a courtesy: if making an answer fails, the upstream's stands.
  * @param lookup Resolves the additional question used to synthesize an answer.
  */
 export async function withDns64(
   q: Question,
   key: string,
-  result: Result,
+  answer: Promise<Result>,
   lookup: (q: Question) => Promise<Result>
 ): Promise<Result> {
+  const synthesizer = SYNTHESIZERS[q.type];
+  if (!synthesizer || (q.dnssecOk && !q.cd)) {
+    return answer;
+  }
+  const aaaa = q.type === TYPE_AAAA;
+  const cached = aaaa ? lookupFreshLocal(key, q) : null;
+  const address = aaaa && !cached ? lookup(addressQuestion(q)) : undefined;
+  void address?.catch(() => {});
+
+  const result = await answer;
   try {
-    const synthesizer = synthesizerFor(q, result);
-    if (!synthesizer) {
+    if (
+      !synthesizer.rcodes.includes(rcodeOf(result.body)) ||
+      parseAnswers(result.body).some(r => r.type === q.type)
+    ) {
       return result;
     }
-    const kept = lookupLocal(key, q);
-    if (kept && !kept.refresh) {
-      return kept.result;
+    const kept = aaaa ? cached?.() : lookupFreshLocal(key, q)?.();
+    if (kept) {
+      return kept;
     }
-    const made = await synthesizer.make(q, result, lookup);
+    const made = await synthesizer.make(
+      q,
+      result,
+      address ? () => address : lookup
+    );
     if (!made) {
       return result;
     }

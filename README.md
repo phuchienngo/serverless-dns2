@@ -18,7 +18,7 @@ then set `dns_ddr_version 1` and `networkmonitor_async_privdns_resolution 1` via
 
 ## Extras
 
-- Honours a client-supplied ECS (dnsproxy / AdGuard Home `edns-addr`). Source prefix 0, such as Firefox's `::/0`, is sent as supplied (RFC 7871 7.1.2). For a nonzero subnet the resolver starts a fallback query without ECS in parallel, using it if the ECS query returns REFUSED (RFC 7871 7.1.3).
+- Honours a client-supplied ECS (dnsproxy / AdGuard Home `edns-addr`). Source prefix 0, such as Firefox's `::/0`, is sent as supplied (RFC 7871 7.1.2). When the resolver sends ECS, it sends one query with ECS and one without in parallel. The fallback is used if the ECS query returns REFUSED (RFC 7871 7.1.3).
 - `ANY` queries get a minimal HINFO locally (`BLOCK_ANY`); `REDIRECTS` in `src/config.ts` answers a name with another name's A/AAAA records (now `medium.com` -> `voz.vn`); not for a query with DO, since what is made here carries no signature.
 - `/resolve?name=8.8.8.8&type=PTR` converts an IP to its reverse name.
 - The DO and CD bits of a query are passed to the upstream (DNSSEC records and `AD` come back as asked; a query with AD but no DO also gets `AD`). Answers made
@@ -93,10 +93,10 @@ Blocked names get NXDOMAIN. The lists are part of the Worker bundle, so nothing 
 
 - Serve-stale: an expired answer (up to 6 h past its TTL) is returned at once with TTL 30 and renewed in the background.
 - The Cache API lookup and the upstream call run in parallel; the first answer wins and the upstream call always renews the cache.
-- Hedging waits three times the recent average upstream latency, bounded to 20–80 ms. If the query is still pending,
+- For regular queries sent without ECS, hedging waits three times the recent average upstream latency, bounded to 20–80 ms. If the query is still pending,
   it sends a second request to `UPSTREAM_BACKUP` if set, or to `UPSTREAM` again, usually on the same connection.
   The first answer wins.
-- `Server-Timing` on the `/resolve` and `/dns-query` responses shows how long the first answer took (`first`).
+- `Server-Timing` on the `/resolve` and `/dns-query` responses reports how long the cache and upstream lookup took to find an answer (`first`).
 
 Build and deploy: `.github/workflows/rebuild.yml` runs `bun run build-lists` and `wrangler deploy` on every push to
 `main`, every day (so the lists stay current) and from the Actions tab. Setup, once: a Cloudflare API token with the
