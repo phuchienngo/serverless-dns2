@@ -88,15 +88,35 @@ function embeddedAddress(name: string): number[] | null {
   return inPrefix ? bytes.slice(12) : null;
 }
 
+function addressQuestion(q: Question): Question {
+  return makeQuestion(q.name, TYPE_A, {dnssecOk: q.dnssecOk, cd: q.cd});
+}
+
+/** Starts the A lookup while the AAAA answer is pending (RFC 6147 5.1.8). */
+export function prefetchDns64A(
+  q: Question,
+  key: string,
+  lookup: (q: Question) => Promise<Result>
+): Promise<Result> | undefined {
+  if (
+    q.type !== TYPE_AAAA ||
+    (q.dnssecOk && !q.cd) ||
+    lookupLocal(key, q)?.refresh === false
+  ) {
+    return undefined;
+  }
+  const pending = lookup(addressQuestion(q));
+  void pending.catch(() => {});
+  return pending;
+}
+
 /** The AAAA answer made from the A records of the name (RFC 6147 5.1). */
 async function synthesizeAaaa(
   q: Question,
   result: Result,
   lookup: (q: Question) => Promise<Result>
 ): Promise<Result | null> {
-  const a = await lookup(
-    makeQuestion(q.name, TYPE_A, {dnssecOk: q.dnssecOk, cd: q.cd})
-  ).catch(() => null); // The AAAA answer stands if the A lookup fails.
+  const a = await lookup(addressQuestion(q)).catch(() => null);
   if (!a || rcodeOf(a.body) !== RCODE_NOERROR) {
     return null;
   }

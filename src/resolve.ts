@@ -28,7 +28,7 @@ import {
 import {encodeName, parseAnswers, rcodeOf} from './wire.js';
 import {makeQuestion} from './query.js';
 import {cookieOption} from './cookie.js';
-import {ipv4onlyAnswer, withDns64} from './dns64.js';
+import {ipv4onlyAnswer, prefetchDns64A, withDns64} from './dns64.js';
 import {getCloudflareRanges} from './cloudflare-ips.js';
 import {addEch, startEchProbe} from './ech.js';
 import {clientEcsReply, makeEcs} from './ecs.js';
@@ -168,12 +168,15 @@ async function resolveQuestion(
   const reason = blockReason(q.name);
   const result = reason
     ? nxdomain(q, reason)
-    : screen(q, await answer(q, options));
-  return options.dns64
-    ? withDns64(q, dns64Key(q, options), result, a =>
-        resolveQuestion(a, {...options, dns64: false})
-      )
-    : result;
+    : answer(q, options).then(result => screen(q, result));
+  if (!options.dns64) {
+    return result;
+  }
+  const key = dns64Key(q, options);
+  const lookup = (other: Question) =>
+    resolveQuestion(other, {...options, dns64: false});
+  const address = reason ? undefined : prefetchDns64A(q, key, lookup);
+  return withDns64(q, key, await result, other => address ?? lookup(other));
 }
 
 /**

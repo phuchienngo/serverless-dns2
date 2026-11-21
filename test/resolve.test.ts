@@ -597,9 +597,9 @@ describe('client subnet (RFC 7871)', () => {
     const name = fresh();
     await ask(name, T.A, {}, {ip: '203.0.113.1'});
     await ask(name, T.A, {}, {ip: '203.0.113.200'});
-    assert.equal(upstream.calls.length, 1, 'same /24');
+    assert.equal(upstream.calls.length, 2, 'same /24');
     await ask(name, T.A, {}, {ip: '198.51.100.1'});
-    assert.equal(upstream.calls.length, 2, 'another /24');
+    assert.equal(upstream.calls.length, 4, 'another /24');
   });
 
   test('an ECS option from the upstream is removed for a client that sent none (RFC 7871 7.2.2)', async () => {
@@ -646,6 +646,34 @@ describe('client subnet: a server that refuses it (RFC 7871 7.1.3)', () => {
       upstream.calls.map(call => hasEcs(call.query)),
       [true, false]
     );
+  });
+
+  test('starts the non-ECS lookup before the ECS refusal arrives', async () => {
+    let refuse!: () => void;
+    const refusal = new Promise<void>(resolve => (refuse = resolve));
+    useUpstream(async q => {
+      if (hasEcs(q)) await refusal;
+      return refuseEcs(q);
+    });
+    const answer = ask(fresh(), T.A, {}, {ip: '203.0.113.77'});
+    const queries = upstream.calls.map(call => hasEcs(call.query));
+    refuse();
+    assert.equal((await answer).msg.rcode, 0);
+    assert.deepEqual(queries, [true, false]);
+  });
+
+  test('keeps the ECS answer when the non-ECS lookup finishes first', async () => {
+    let release!: () => void;
+    const preferred = new Promise<void>(resolve => (release = resolve));
+    useUpstream(async q => {
+      if (!hasEcs(q)) return answerA(q, 30);
+      await preferred;
+      return answerA(q);
+    });
+    const answer = ask(fresh(), T.A, {}, {ip: '203.0.113.77'});
+    await Promise.resolve();
+    release();
+    assert.equal((await answer).msg.answer[0].ttl, 300);
   });
 
   test('and the answer is cached for that subnet', async () => {
@@ -698,11 +726,11 @@ describe('client subnet: a client that asks not to be located (RFC 7871 7.1.2)',
     const name = fresh();
     await ask(name, T.A, {}, {ip: '203.0.113.1'});
     await ask(name, T.A, {}, {ip: '203.0.113.1', ecs: none});
-    assert.equal(upstream.calls.length, 2, 'not served from the /24 entry');
+    assert.equal(upstream.calls.length, 3, 'not served from the /24 entry');
     await ask(name, T.A, {}, {ip: '198.51.100.9', ecs: none});
-    assert.equal(upstream.calls.length, 2, 'the same entry for any IP');
+    assert.equal(upstream.calls.length, 3, 'the same entry for any IP');
     await ask(name, T.A, {}, {ecs: null});
-    assert.equal(upstream.calls.length, 3, 'not shared with "no ECS"');
+    assert.equal(upstream.calls.length, 4, 'not shared with "no ECS"');
   });
 
   test('the answer carries the upstream ECS option, scope 0', async () => {
@@ -1027,6 +1055,29 @@ describe('DNS64 (RFC 6147)', () => {
       60,
       'smaller of the A TTL and the SOA minimum'
     );
+  });
+
+  test('starts the A lookup before the AAAA answer arrives', async () => {
+    let release!: () => void;
+    const aaaa = new Promise<void>(resolve => (release = resolve));
+    useUpstream(async q => {
+      const {name, type} = q.question[0];
+      if (type === T.AAAA) await aaaa;
+      return makeResponse({
+        qname: name,
+        qtype: type,
+        answer:
+          type === T.A ? [{type, ttl: 300, rdata: ip4('93.184.216.34')}] : [],
+      });
+    });
+    const response = ask(fresh(), T.AAAA, {}, {dns64: true});
+    const types = upstream.calls.map(call => call.query.question[0].type);
+    release();
+    assert.deepEqual(
+      [...(await response).msg.answer[0].rdata],
+      ip6('64:ff9b::5db8:d822')
+    );
+    assert.deepEqual(types, [T.AAAA, T.A]);
   });
 
   test('a real AAAA is left alone, and so is everything when DNS64 is off', async () => {

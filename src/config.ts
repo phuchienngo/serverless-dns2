@@ -36,8 +36,8 @@ export const STALE_TTL = 30;
  * the open connection: no new handshake, but it only helps against a slow
  * request, not a slow connection.
  */
-export const HEDGE_MIN_MS = 40;
-export const HEDGE_MAX_MS = 150;
+export const HEDGE_MIN_MS = 20;
+export const HEDGE_MAX_MS = 80;
 
 /** Answer NXDOMAIN locally for private and undelegated names. */
 export const BLOCK_UNDELEGATED = true;
@@ -68,7 +68,6 @@ export const BLOCKLIST = {
     'https://raw.githubusercontent.com/mullvad/dns-blocklists/refs/heads/main/output/doh/doh_adblock.txt',
     'https://raw.githubusercontent.com/mullvad/dns-blocklists/refs/heads/main/output/doh/doh_privacy.txt',
     'https://raw.githubusercontent.com/mullvad/dns-blocklists/refs/heads/main/output/doh/doh_malware.txt',
-    'https://raw.githubusercontent.com/mullvad/dns-blocklists/refs/heads/main/output/doh/doh_gambling.txt',
   ],
   allow: [],
   block: [

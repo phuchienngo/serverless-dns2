@@ -52,23 +52,35 @@ async function post(
 /** Recent upstream latency in ms (moving average), for the hedge delay. */
 let latencyAverage = 30;
 
+interface PrimaryAttempt {
+  controller: AbortController;
+  started: number;
+  body: Promise<Uint8Array>;
+}
+
 /**
  * Sends a query to the upstream resolver. If it has not answered after about
  * three times its recent latency, the query is sent again (to UPSTREAM_BACKUP
  * if set, else to UPSTREAM, usually on the same connection), and the first
  * answer wins.
  */
-export async function forward(wire: Uint8Array): Promise<Uint8Array> {
-  const primary = new AbortController();
+export async function forward(
+  wire: Uint8Array,
+  pending?: PrimaryAttempt
+): Promise<Uint8Array> {
+  const primary = pending?.controller ?? new AbortController();
   let hedged: AbortController | undefined;
   const delay = Math.min(
     HEDGE_MAX_MS,
     Math.max(HEDGE_MIN_MS, 3 * latencyAverage)
   );
-  const started = performance.now();
+  const started = pending?.started ?? performance.now();
   let done = false;
   const hedge = async () => {
-    await new Promise(resolve => setTimeout(resolve, delay));
+    const remaining = pending
+      ? Math.max(0, delay - (performance.now() - started))
+      : delay;
+    await new Promise(resolve => setTimeout(resolve, remaining));
     if (done) {
       throw new Error('not needed');
     }
@@ -77,7 +89,7 @@ export async function forward(wire: Uint8Array): Promise<Uint8Array> {
   };
   try {
     const body = await Promise.any([
-      post(UPSTREAM, wire, primary),
+      pending?.body ?? post(UPSTREAM, wire, primary),
       hedge(),
     ]);
     const elapsed = Math.min(performance.now() - started, 300);
@@ -106,19 +118,36 @@ export function queryFlags(q: Question): QueryFlags {
 }
 
 /**
- * Sends a question to the upstream resolver. Some name servers refuse a query
- * that carries a client subnet (Akamai's, asked through Google): the question
- * is then asked once more without one (RFC 7871 7.1.3).
+ * Starts a non-ECS fallback alongside a query with a real subnet. The ECS
+ * answer takes precedence unless it is REFUSED (RFC 7871 7.1.3). Source
+ * prefix 0 has no address bytes, and its fallback only starts after a refusal.
  */
 async function ask(
   question: number[],
   ecs: number[] | null,
   flags: QueryFlags
 ): Promise<Uint8Array> {
-  const body = await forward(buildQuery(question, ecs, flags));
-  return ecs && rcodeOf(body) === RCODE_REFUSED
-    ? forward(buildQuery(question, null, flags))
-    : body;
+  const preferred = forward(buildQuery(question, ecs, flags));
+  if (!ecs) {
+    return preferred;
+  }
+  const wire = buildQuery(question, null, flags);
+  let fallback: PrimaryAttempt | undefined;
+  if (ecs.length > 8) {
+    const controller = new AbortController();
+    const started = performance.now();
+    const body = post(UPSTREAM, wire, controller);
+    void body.catch(() => {});
+    fallback = {controller, started, body};
+  }
+  try {
+    const body = await preferred;
+    return rcodeOf(body) === RCODE_REFUSED
+      ? await forward(wire, fallback)
+      : body;
+  } finally {
+    fallback?.controller.abort();
+  }
 }
 
 /**
