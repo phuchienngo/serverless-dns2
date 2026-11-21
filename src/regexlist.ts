@@ -1,4 +1,4 @@
-/** @fileoverview Regex allow and block rules from blocklists.yaml. */
+/** @fileoverview Regex allow and block rules. */
 
 const UNSAFE: Array<[RegExp, string]> = [
   [/\(\?<?[=!]/, 'lookaround'],
@@ -43,7 +43,7 @@ export function checkPattern(pattern: string): string | null {
  * Splits `block:` / `allow:` entries: `/pattern/` is a regex, anything else is
  * a domain (which also covers its subdomains).
  */
-export function splitRules(entries: string[]): {
+export function splitRules(entries: readonly string[]): {
   domains: string[];
   patterns: string[];
 } {

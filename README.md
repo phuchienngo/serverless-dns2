@@ -57,7 +57,7 @@ from data this gateway does not validate.
 
 ## Blocklist
 
-1. Put your sources in `blocklists.yaml` (`lists`, plus optional `allow` and `block` rules).
+1. Put your sources in `BLOCKLIST.lists` in `src/config.ts`, with any `allow` and `block` rules.
 2. `bun run build-lists` downloads them, keeps plain domains only and writes `build/blocklist.bin` (with `rules.json` and `cloudflare-ips.json` beside it)
    (a Ribbon filter: each domain's hash selects some of 64 consecutive slots of `BLOCKLIST_PRECISION_BITS` bits, and
    the build solves for slot values that XOR to the domain's fingerprint; about 20.02 bits per domain at 20 bits, where
@@ -71,7 +71,7 @@ from data this gateway does not validate.
 3. The file is not committed. The GitHub workflow builds it on every push to `main` and deploys the Worker with it
    (see below); `bun run deploy` does the same from your machine.
 
-Rules: `block:` and `allow:` in `blocklists.yaml` take domains (which also cover their subdomains) or `/regex/` rules,
+`BLOCKLIST.block` and `BLOCKLIST.allow` take domains (which also cover their subdomains) or `/regex/` rules as strings,
 matched against the lower-case name without a trailing dot (anchor with `^`/`$` yourself). The build rejects lookaround,
 backreferences, and `*`, `+`, or `{...}` after a group. Groups can still be optional with `?`. Keep patterns simple to limit
 backtracking. `allow` wins over the lists and the block rules, so an allowed subdomain works even under a blocked
@@ -85,7 +85,7 @@ DNS rebinding protection (`BLOCK_REBINDING` in `src/config.ts`): if the answer f
 loopback or link-local address (A, AAAA, IPv4-mapped, or the `ipv4hint`/`ipv6hint` of an HTTPS/SVCB record), the name gets
 NXDOMAIN with EDE 15 ("dns rebinding"), so a web page cannot reach your router or local services through a public name. `0.0.0.0`
 and `::` (what blocklists answer) pass. Like uncloaking it is checked on every response, also cached ones. A name that must resolve to a
-private address (a service at home) goes in `allow:` in `blocklists.yaml`.
+private address (a service at home) goes in `BLOCKLIST.allow` in `src/config.ts`.
 
 Blocked names get NXDOMAIN. The lists are part of the Worker bundle, so nothing is fetched at run time.
 

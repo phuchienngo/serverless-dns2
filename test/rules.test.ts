@@ -1,4 +1,4 @@
-/** `block:` / `allow:` rules in blocklists.yaml (src/regexlist.ts). */
+/** Block and allow rules (src/regexlist.ts). */
 
 import assert from 'node:assert/strict';
 import {describe, test} from 'node:test';

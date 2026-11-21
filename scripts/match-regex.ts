@@ -1,16 +1,14 @@
 /**
- * Shows how the `block:` / `allow:` rules of blocklists.yaml treat names.
+ * Shows how the block and allow rules in src/config.ts treat names.
  * The downloaded lists are not checked. Usage: bun scripts/match-regex.ts name...
  */
 
-import {readFile} from 'node:fs/promises';
-import {parse} from 'yaml';
+import {BLOCKLIST} from '../src/config.js';
 import {checkPattern, domainPattern, splitRules} from '../src/regexlist.js';
 
-async function main() {
-  const config = parse(await readFile('blocklists.yaml', 'utf8')) ?? {};
-  const block = splitRules(config.block ?? []);
-  const allow = splitRules(config.allow ?? []);
+function main() {
+  const block = splitRules(BLOCKLIST.block);
+  const allow = splitRules(BLOCKLIST.allow);
   const allowPatterns = [
     ...allow.patterns,
     ...allow.domains.map(domainPattern),
@@ -42,7 +40,9 @@ async function main() {
   }
 }
 
-main().catch(error => {
-  console.error(error.message);
+try {
+  main();
+} catch (error) {
+  console.error((error as Error).message);
   process.exit(1);
-});
+}

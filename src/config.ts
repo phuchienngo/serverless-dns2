@@ -63,6 +63,39 @@ export const BLOCK_ANY = true;
 /** Name whose HTTPS record carries Cloudflare's shared ECH key. */
 export const ECH_FRONT_DOMAIN = 'cloudflare-ech.com';
 
+export const BLOCKLIST = {
+  lists: [
+    'https://raw.githubusercontent.com/mullvad/dns-blocklists/refs/heads/main/output/doh/doh_adblock.txt',
+    'https://raw.githubusercontent.com/mullvad/dns-blocklists/refs/heads/main/output/doh/doh_privacy.txt',
+    'https://raw.githubusercontent.com/mullvad/dns-blocklists/refs/heads/main/output/doh/doh_malware.txt',
+    'https://raw.githubusercontent.com/mullvad/dns-blocklists/refs/heads/main/output/doh/doh_gambling.txt',
+  ],
+  allow: [],
+  block: [
+    '/^ad([sxv]?[0-9]*|system)[_.-][^.]+\\.|[_.-]ad([sxv]?[0-9]*|system)[_.-]/',
+    '/^(.+[_.-])?(?:adse?rv(er?|ice)?s?[0-9]*|telemetry)[_.-]/',
+    '/^adim(age|g)s?[0-9]*[_.-]/',
+    '/^adtrack(er|ing)?[0-9]*[_.-]/',
+    '/^advert(s|is(ing|ements?))?[0-9]*[_.-]/',
+    '/^aff(iliat(es?|ion))?[_.-]/',
+    '/^analytics?[_.-]/',
+    '/^banners?[_.-]/',
+    '/^beacons?[0-9]*[_.-]/',
+    '/^count(ers?)?[0-9]*[_.-]/',
+    '/^mads\\./',
+    '/^pixels?[-.]/',
+    '/^stat(s|istics)?[0-9]*[_.-]/',
+    '/^(ads|logs|cloudservices).roku.com$/',
+    '/^track(ers?|ing)?[0-9]*[_.-]/',
+    '/^traff(ic)?[-.]/',
+    'thodia.mservice.io',
+    'merchant.momocdn.net',
+    'social.momocdn.net',
+    'socialhub.mservice.com.vn',
+    'socialhub.momo.vn',
+  ],
+} as const;
+
 /**
  * Build time: a name that is not listed is wrongly blocked with a probability
  * of about 2^-this per suffix looked up. Each extra bit costs about one more
@@ -72,8 +105,8 @@ export const BLOCKLIST_PRECISION_BITS = 20;
 
 /**
  * DNS rebinding protection: a name whose answer holds a private, loopback or
- * link-local address (or one in an HTTPS/SVCB hint) gets NXDOMAIN. An `allow`
- * rule in blocklists.yaml exempts a name, such as one for a service at home.
+ * link-local address (or one in an HTTPS/SVCB hint) gets NXDOMAIN. A rule in
+ * `BLOCKLIST.allow` exempts a name, such as one for a service at home.
  */
 export const BLOCK_REBINDING = true;
 

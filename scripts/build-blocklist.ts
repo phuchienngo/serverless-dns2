@@ -1,26 +1,23 @@
 /**
- * Builds build/blocklist.bin from blocklists.yaml.
- * Usage: bun scripts/build-blocklist.ts [config.yaml] [out.bin]
+ * Builds build/blocklist.bin from the sources and rules in src/config.ts.
+ * Usage: bun scripts/build-blocklist.ts [out.bin]
  */
 
 import {mkdir, readFile, writeFile} from 'node:fs/promises';
 import {dirname, join} from 'node:path';
-import {parse} from 'yaml';
 import {buildBlockset, dropMatched, parseDomain} from './blocklist-lib.js';
 import {parseCidrs} from '../src/ipv4.js';
-import {BLOCKLIST_PRECISION_BITS, CLOUDFLARE_IPS_URL} from '../src/config.js';
+import {
+  BLOCKLIST,
+  BLOCKLIST_PRECISION_BITS,
+  CLOUDFLARE_IPS_URL,
+} from '../src/config.js';
 import {
   checkPattern,
   compilePatterns,
   domainPattern,
   splitRules,
 } from '../src/regexlist.js';
-
-interface Config {
-  lists?: string[];
-  allow?: string[];
-  block?: string[];
-}
 
 async function readSource(source: string): Promise<string> {
   if (!/^https?:\/\//.test(source)) {
@@ -34,13 +31,11 @@ async function readSource(source: string): Promise<string> {
 }
 
 async function main() {
-  const [configPath = 'blocklists.yaml', outPath = 'build/blocklist.bin'] =
-    process.argv.slice(2);
-  const config: Config = parse(await readFile(configPath, 'utf8')) ?? {};
+  const outPath = process.argv[2] ?? 'build/blocklist.bin';
 
   // `block` and `allow` entries are domains or /regex/ rules.
-  const block = splitRules(config.block ?? []);
-  const allow = splitRules(config.allow ?? []);
+  const block = splitRules(BLOCKLIST.block);
+  const allow = splitRules(BLOCKLIST.allow);
   for (const pattern of [...block.patterns, ...allow.patterns]) {
     const problem = checkPattern(pattern);
     if (problem) {
@@ -69,7 +64,7 @@ async function main() {
   );
 
   const domains = new Set<string>();
-  for (const source of config.lists ?? []) {
+  for (const source of BLOCKLIST.lists) {
     const before = domains.size;
     let total = 0;
     for (const line of (await readSource(source)).split(/\r?\n/)) {
