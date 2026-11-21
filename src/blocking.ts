@@ -36,6 +36,7 @@ export function nxdomain(q: Question, reason: string): Result {
       text: reason,
     }),
     ttl: TTL_BLOCKED,
+    blocked: true,
   };
 }
 

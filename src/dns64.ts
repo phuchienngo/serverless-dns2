@@ -209,6 +209,7 @@ export async function withDns64(
   const result = await answer;
   try {
     if (
+      result.blocked ||
       !synthesizer.rcodes.includes(rcodeOf(result.body)) ||
       parseAnswers(result.body).some(r => r.type === q.type)
     ) {

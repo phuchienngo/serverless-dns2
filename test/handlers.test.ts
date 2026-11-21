@@ -344,6 +344,28 @@ describe('/resolve (Google JSON API)', () => {
 });
 
 describe('dns64 parameter', () => {
+  test('Server-Timing includes the A lookup when the original AAAA is cached', async () => {
+    upstream.restore();
+    upstream = mockUpstream(async q => {
+      const {name, type} = q.question[0];
+      if (type !== T.A) return makeResponse({qname: name, qtype: type});
+      await new Promise(resolve => setTimeout(resolve, 30));
+      return makeResponse({
+        qname: name,
+        qtype: type,
+        answer: [{type, ttl: 120, rdata: ip4('93.184.216.34')}],
+      });
+    });
+    const url = `/resolve?name=${fresh()}&type=AAAA`;
+    await get(url, handleJson);
+    const res = await get(`${url}&dns64=1`, handleJson);
+    const answer = (await res.json()) as {Answer?: unknown[]};
+    assert.equal(answer.Answer?.length, 1);
+    const timing = res.headers.get('server-timing');
+    const duration = Number(timing?.match(/first;dur=([\d.]+)/)?.[1]);
+    assert.ok(duration >= 20, `first was ${duration} ms`);
+  });
+
   test('ipv4only.arpa still rejects unsupported EDNS versions with DNS64 on', async () => {
     const wire = makeQuery('ipv4only.arpa', T.AAAA, {ednsVersion: 1});
     const res = await get(`/dns-query?dns=${b64url(wire)}&dns64=1`);

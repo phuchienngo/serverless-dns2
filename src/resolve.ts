@@ -29,12 +29,11 @@ import {encodeName, parseAnswers, rcodeOf} from './wire.js';
 import {makeQuestion} from './query.js';
 import {cookieOption} from './cookie.js';
 import {ipv4onlyAnswer, withDns64} from './dns64.js';
-import {getCloudflareRanges} from './cloudflare-ips.js';
 import {addEch, startEchProbe} from './ech.js';
 import {clientEcsReply, makeEcs} from './ecs.js';
 import {ddrAnswer, isDdr, localAnswer, typeAnswer} from './local.js';
 import type {Question, ResolveOptions, Result} from './types.js';
-import {askUpstream, coalesce, forward, queryFlags} from './upstream.js';
+import {askUpstream, coalesce, queryFlags} from './upstream.js';
 
 /** Names that need no escaping in a URL (the usual case: faster to test). */
 const SAFE_NAME = /^[a-z0-9.-]+$/;
@@ -175,7 +174,7 @@ async function resolveQuestion(
   }
   const key = dns64Key(q, options);
   const lookup = (other: Question) =>
-    resolveQuestion(other, {...options, dns64: false, timing: undefined});
+    resolveQuestion(other, {...options, dns64: false});
   return withDns64(q, key, result, lookup);
 }
 
@@ -197,11 +196,7 @@ async function answer(q: Question, options: ResolveOptions): Promise<Result> {
   const key = cacheKey(host, q, ecs);
   const fetchFresh = async () => {
     const result = await coalesce(key, q, async () => {
-      // ECH replaces the HTTPS record with an unsigned one, which a client that
-      // validates DNSSEC (DO) would reject; give those the real record.
-      const probe = flags.dnssec
-        ? null
-        : startEchProbe(q, ecs, forward, getCloudflareRanges);
+      const probe = startEchProbe(q, ecs);
       return addEch(await askUpstream(q, ecs, flags), q, probe);
     });
     store(cache, key, result, waitUntil);
@@ -226,7 +221,6 @@ async function answer(q: Question, options: ResolveOptions): Promise<Result> {
   // 2. The Cache API and the upstream resolver race: whichever answers first
   //    wins (reading the Cache API can take longer than asking the upstream).
   //    The upstream call always finishes, so it renews the cache either way.
-  const started = performance.now();
   const fetching = fetchFresh();
   waitUntil?.(fetching.catch(() => {})); // Failure is handled where it is awaited.
   const shared = lookupShared(cache, key, q).catch(() => null); // A miss.
@@ -234,11 +228,7 @@ async function answer(q: Question, options: ResolveOptions): Promise<Result> {
     shared.then(hit => hit?.result ?? null),
     fetching.catch(() => null),
   ]);
-  const result = first ?? (await shared)?.result ?? (await fetching);
-  if (options.timing) {
-    options.timing.first = performance.now() - started;
-  }
-  return result;
+  return first ?? (await shared)?.result ?? fetching;
 }
 
 /**

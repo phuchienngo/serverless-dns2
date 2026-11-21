@@ -96,7 +96,7 @@ Blocked names get NXDOMAIN. The lists are part of the Worker bundle, so nothing 
 - For regular queries sent without ECS, hedging waits three times the recent average upstream latency, bounded to 20–80 ms. If the query is still pending,
   it sends a second request to `UPSTREAM_BACKUP` if set, or to `UPSTREAM` again, usually on the same connection.
   The first answer wins.
-- `Server-Timing` on the `/resolve` and `/dns-query` responses reports how long the cache and upstream lookup took to find an answer (`first`).
+- `Server-Timing` on `/resolve` and `/dns-query` reports how long it took to prepare the DNS answer (`first`), including any DNS64 or DDR lookups needed for it.
 
 Build and deploy: `.github/workflows/rebuild.yml` runs `bun run build-lists` and `wrangler deploy` on every push to
 `main`, every day (so the lists stay current) and from the Actions tab. Setup, once: a Cloudflare API token with the

@@ -90,17 +90,27 @@ function findOpt(buf: Uint8Array): {opt: QueryOpt | null; malformed: boolean} {
   }
 }
 
+export class MultipleQuestionsError extends Error {}
+
 /**
  * Parses the single question of a DNS query.
  * @throws If the message is not a well-formed single-question query.
  */
 export function parseQuestion(buf: Uint8Array): Question {
-  if (buf.length < 17 || buf.length > MAX_QUERY) {
+  if (buf.length < HEADER_BYTES || buf.length > MAX_QUERY) {
     throw new Error('bad length');
   }
   const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
   const isResponse = buf[2] & FLAG_QR_OR_RA;
-  if (isResponse || view.getUint16(4) !== 1) {
+  const opcode = (buf[2] >> 3) & 15;
+  const questions = view.getUint16(4);
+  if (!isResponse && opcode === 0 && questions > 1) {
+    throw new MultipleQuestionsError('multiple questions');
+  }
+  if (buf.length < HEADER_BYTES + 5) {
+    throw new Error('bad length');
+  }
+  if (isResponse || questions !== 1) {
     throw new Error('not a query');
   }
 
@@ -140,7 +150,7 @@ export function parseQuestion(buf: Uint8Array): Question {
     cd: (buf[3] & FLAG_CD) !== 0,
     ad: (buf[3] & FLAG_AD) !== 0,
     rd: (buf[2] & FLAG_RD) !== 0,
-    opcode: (buf[2] >> 3) & 15,
+    opcode,
     ednsVersion: opt?.version ?? 0,
     padding: opt?.padding ?? false,
     cookie: opt?.cookie ?? null,

@@ -63,7 +63,7 @@ function recordLatency(started: number): void {
  * if set, else to UPSTREAM, usually on the same connection), and the first
  * answer wins.
  */
-export async function forward(wire: Uint8Array): Promise<Uint8Array> {
+async function forward(wire: Uint8Array): Promise<Uint8Array> {
   const primary = new AbortController();
   let hedged: AbortController | undefined;
   const delay = Math.min(
@@ -71,24 +71,20 @@ export async function forward(wire: Uint8Array): Promise<Uint8Array> {
     Math.max(HEDGE_MIN_MS, 3 * latencyAverage)
   );
   const started = performance.now();
-  let done = false;
-  const hedge = async () => {
-    await new Promise(resolve => setTimeout(resolve, delay));
-    if (done) {
-      throw new Error('not needed');
-    }
-    hedged = new AbortController();
-    return post(UPSTREAM_BACKUP || UPSTREAM, wire, hedged);
-  };
+  const preferred = post(UPSTREAM, wire, primary);
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const backup = new Promise<Uint8Array>((resolve, reject) => {
+    timer = setTimeout(() => {
+      hedged = new AbortController();
+      post(UPSTREAM_BACKUP || UPSTREAM, wire, hedged).then(resolve, reject);
+    }, delay);
+  });
   try {
-    const body = await Promise.any([
-      post(UPSTREAM, wire, primary),
-      hedge(),
-    ]);
+    const body = await Promise.any([preferred, backup]);
     recordLatency(started);
     return body;
   } finally {
-    done = true;
+    clearTimeout(timer);
     primary.abort(); // Cancel the loser.
     hedged?.abort();
   }
@@ -113,10 +109,10 @@ export function queryFlags(q: Question): QueryFlags {
  * Sends one query with ECS and one without. The ECS answer takes precedence
  * unless it is REFUSED (RFC 7871 7.1.3).
  */
-async function ask(
+export async function queryUpstream(
   question: number[],
   ecs: number[] | null,
-  flags: QueryFlags
+  flags?: QueryFlags
 ): Promise<Uint8Array> {
   const wire = buildQuery(question, ecs, flags);
   if (!ecs) {
@@ -147,9 +143,9 @@ export async function askUpstream(
   const target = redirectTarget(q);
   if (target) {
     const question = [...encodeName(target), ...u16(q.type), 0, 1];
-    return redirectedResult(await ask(question, ecs, flags), q);
+    return redirectedResult(await queryUpstream(question, ecs, flags), q);
   }
-  const body = await ask(q.raw, ecs, flags);
+  const body = await queryUpstream(q.raw, ecs, flags);
   body.set(u16(q.id), 0);
   return {body, ttl: minTtl(body)};
 }

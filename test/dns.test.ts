@@ -10,21 +10,23 @@ import {isTruncated, latin1, utf8} from '../src/wire.js';
 import {alpnValue, svcbRdata} from '../src/svcb.js';
 import {EDE_BLOCKED} from '../src/constants.js';
 import {
-  addOptOption,
   ednsOption,
   rewriteOpt,
   cnameTargets,
   copyRd,
   edeOption,
   minTtl,
-  padResponse,
   makeRecord,
-  removeOptOption,
   respond,
   respondNegative,
   stripOpt,
 } from '../src/response.js';
-import {buildQuery, makeQuestion, parseQuestion} from '../src/query.js';
+import {
+  buildQuery,
+  makeQuestion,
+  MultipleQuestionsError,
+  parseQuestion,
+} from '../src/query.js';
 import {
   encodeName,
   lowerAscii,
@@ -119,6 +121,12 @@ describe('parseQuestion (RFC 1035 4.1)', () => {
     }
     assert.throws(() => parseQuestion(good.subarray(0, 12)), 'too short');
     assert.throws(() => parseQuestion(new Uint8Array(513)), 'too long');
+  });
+
+  test('identifies a multi-question QUERY even with just its header', () => {
+    const wire = makeQuery('a.test', T.A).slice(0, 12);
+    wire[5] = 2;
+    assert.throws(() => parseQuestion(wire), MultipleQuestionsError);
   });
 
   test('limits a name to 255 octets on the wire (RFC 1035 2.3.4)', () => {
@@ -359,23 +367,23 @@ describe('OPT record editing', () => {
     assert.deepEqual(stripOpt(garbage), garbage);
   });
 
-  test('addOptOption appends an option and grows RDLENGTH', () => {
-    const out = addOptOption(upstream(), edeOption(3, 'stale'));
+  test('appends an option and grows RDLENGTH', () => {
+    const out = rewriteOpt(upstream(), {add: [edeOption(3, 'stale')]});
     const m = parseMsg(out);
     assert.equal(m.opt!.options.length, 1);
     assert.equal(m.opt!.options[0].code, 15);
     assert.equal(m.answer.length, 1);
   });
 
-  test('addOptOption leaves a message without OPT alone', () => {
+  test('adding an option leaves a message without OPT alone', () => {
     const noOpt = makeResponse({qname: 'a.test', qtype: T.A, opt: false});
-    assert.deepEqual(addOptOption(noOpt, edeOption(3, '')), noOpt);
+    assert.equal(rewriteOpt(noOpt, {add: [edeOption(3, '')]}), noOpt);
   });
 
-  test('padResponse pads to a multiple of 468 bytes (RFC 8467 4.1)', () => {
+  test('pads to a multiple of 468 bytes (RFC 8467 4.1)', () => {
     for (let n = 1; n < 40; n++) {
       const body = makeResponse({qname: `${'x'.repeat(n)}.test`, qtype: T.A});
-      const padded = padResponse(body);
+      const padded = rewriteOpt(body, {pad: true});
       assert.equal(padded.length % 468, 0, `length ${body.length}`);
       assert.ok(padded.length >= body.length);
       assert.ok(padded.length - body.length < 468 + 4);
@@ -385,9 +393,9 @@ describe('OPT record editing', () => {
     }
   });
 
-  test('padResponse of a response without OPT changes nothing', () => {
+  test('padding a response without OPT changes nothing', () => {
     const noOpt = makeResponse({qname: 'a.test', qtype: T.A, opt: false});
-    assert.deepEqual(padResponse(noOpt), noOpt);
+    assert.equal(rewriteOpt(noOpt, {pad: true}), noOpt);
   });
 
   test('copyRd sets RD without touching the input', () => {
@@ -572,7 +580,7 @@ describe('minTtl (RFC 2181 5.2, RFC 2308 5)', () => {
   });
 });
 
-describe('removeOptOption', () => {
+describe('rewriteOpt (removing options)', () => {
   const withOptions = () =>
     makeResponse({
       qname: 'a.test',
@@ -587,7 +595,7 @@ describe('removeOptOption', () => {
     });
 
   test('removes only the option with that code', () => {
-    const m = parseMsg(removeOptOption(withOptions(), 8));
+    const m = parseMsg(rewriteOpt(withOptions(), {remove: 8}));
     assert.deepEqual(
       m.opt!.options.map(o => o.code),
       [15]
@@ -597,11 +605,11 @@ describe('removeOptOption', () => {
 
   test('leaves the message alone without that option or without OPT', () => {
     const body = withOptions();
-    assert.equal(removeOptOption(body, 12), body);
+    assert.equal(rewriteOpt(body, {remove: 12}), body);
     const noOpt = makeResponse({qname: 'a.test', qtype: T.A, opt: false});
-    assert.equal(removeOptOption(noOpt, 8), noOpt);
+    assert.equal(rewriteOpt(noOpt, {remove: 8}), noOpt);
     const garbage = new Uint8Array([1, 2, 3]);
-    assert.equal(removeOptOption(garbage, 8), garbage);
+    assert.equal(rewriteOpt(garbage, {remove: 8}), garbage);
   });
 
   test('can empty the OPT record', () => {
@@ -610,7 +618,7 @@ describe('removeOptOption', () => {
       qtype: T.A,
       opt: {options: [{code: 8, data: [0, 1, 24, 0, 1, 2, 3]}]},
     });
-    assert.equal(parseMsg(removeOptOption(body, 8)).opt!.options.length, 0);
+    assert.equal(parseMsg(rewriteOpt(body, {remove: 8})).opt!.options.length, 0);
   });
 });
 
@@ -825,9 +833,9 @@ describe('rewriteOpt (all OPT changes in one pass)', () => {
   test('gives the same bytes as making the changes one by one', () => {
     for (const n of sizes) {
       const resp = response(n);
-      const oneByOne = padResponse(
-        addOptOption(addOptOption(removeOptOption(resp, 8), ede), cookie)
-      );
+      const removed = rewriteOpt(resp, {remove: 8});
+      const added = rewriteOpt(removed, {add: [ede, cookie]});
+      const oneByOne = rewriteOpt(added, {pad: true});
       const together = rewriteOpt(resp, {
         remove: 8,
         add: [ede, cookie],
@@ -848,10 +856,9 @@ describe('rewriteOpt (all OPT changes in one pass)', () => {
       pad: true,
     });
     const ecs = ednsOption(8, [0, 1, 32, 24, 203, 0, 113, 7]);
-    const replaced = addOptOption(removeOptOption(resp, 8), ecs);
-    const oneByOne = padResponse(
-      addOptOption(addOptOption(replaced, ede), cookie)
-    );
+    const removed = rewriteOpt(resp, {remove: 8});
+    const added = rewriteOpt(removed, {add: [ecs, ede, cookie]});
+    const oneByOne = rewriteOpt(added, {pad: true});
     assert.deepEqual(together, oneByOne);
   });
 

@@ -37,6 +37,7 @@ export interface Result {
   ttl: number;
   hit?: boolean;
   stale?: boolean;
+  blocked?: true;
 }
 
 export interface Env {
@@ -60,6 +61,4 @@ export interface ResolveOptions extends Context {
    */
   ecs?: number[] | null;
   dns64?: boolean;
-  /** Filled with durations in ms (see `serverTiming`). */
-  timing?: Record<string, number>;
 }

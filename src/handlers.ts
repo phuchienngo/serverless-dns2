@@ -6,13 +6,12 @@
 
 import {MAX_DNS_PARAM, MAX_QUERY} from './config.js';
 import {RECORD_TYPES, TTL_UNCACHED, TYPE_NAPTR, TYPE_PTR} from './constants.js';
-import {makeQuestion, parseQuestion} from './query.js';
+import {makeQuestion, MultipleQuestionsError, parseQuestion} from './query.js';
 import {clientEcs, parseEcsParam, reverseName} from './ecs.js';
 import {toJson} from './format.js';
 import {formErrorHeader} from './response.js';
 import {resolve, upstreamFailure} from './resolve.js';
 import type {Context, Question, ResolveOptions, Result} from './types.js';
-import {HEADER_BYTES} from './wire.js';
 
 function textResponse(
   message: string,
@@ -23,22 +22,13 @@ function textResponse(
 }
 
 /**
- * @return A Server-Timing header value for the durations in `timing`.
- */
-function formatTiming(timing?: Record<string, number>): string {
-  return Object.entries(timing ?? {})
-    .map(([name, ms]) => `${name};dur=${ms.toFixed(1)}`)
-    .join(', ');
-}
-
-/**
  * @return The headers of a response: its type, how long a client may keep it,
  *     whether the gateway had it cached, and Server-Timing.
  */
 function responseHeaders(
   contentType: string,
   result: Result,
-  timing?: Record<string, number>
+  first?: number
 ): Record<string, string> {
   const headers: Record<string, string> = {
     'content-type': contentType,
@@ -47,9 +37,8 @@ function responseHeaders(
   if (result.hit) {
     headers['x-cache'] = 'HIT';
   }
-  const serverTiming = formatTiming(timing);
-  if (serverTiming) {
-    headers['server-timing'] = serverTiming;
+  if (first !== undefined) {
+    headers['server-timing'] = `first;dur=${first.toFixed(1)}`;
   }
   return headers;
 }
@@ -57,21 +46,17 @@ function responseHeaders(
 /**
  * @return A `application/dns-message` response.
  */
-function wireResponse(
-  result: Result,
-  timing?: Record<string, number>
-): Response {
+function wireResponse(result: Result, first?: number): Response {
   return new Response(result.body, {
-    headers: responseHeaders('application/dns-message', result, timing),
+    headers: responseHeaders('application/dns-message', result, first),
   });
 }
 
-/** The options for resolving a request to `url`, with room for Server-Timing. */
+/** The options for resolving a request to `url`. */
 function makeOptions(url: URL, ctx: Context): ResolveOptions {
   return {
     ...ctx,
     host: url.hostname,
-    timing: {},
     dns64: flag(url.searchParams, 'dns64'),
   };
 }
@@ -83,12 +68,15 @@ function makeOptions(url: URL, ctx: Context): ResolveOptions {
 async function resolveOrFail(
   question: Question,
   options: ResolveOptions
-): Promise<Result> {
+): Promise<{result: Result; first: number}> {
+  const started = performance.now();
+  let result: Result;
   try {
-    return await resolve(question, options);
+    result = await resolve(question, options);
   } catch {
-    return upstreamFailure(question); // Upstream down, timed out or unreadable.
+    result = upstreamFailure(question);
   }
+  return {result, first: performance.now() - started};
 }
 
 /**
@@ -146,13 +134,8 @@ export async function handle(
   let question: Question;
   try {
     question = parseQuestion(wire);
-  } catch {
-    if (
-      wire.length >= HEADER_BYTES &&
-      wire.length <= MAX_QUERY &&
-      wire[2] >> 3 === 0 &&
-      ((wire[4] << 8) | wire[5]) > 1
-    ) {
+  } catch (error) {
+    if (error instanceof MultipleQuestionsError) {
       return wireResponse({body: formErrorHeader(wire), ttl: TTL_UNCACHED});
     }
     return textResponse('bad dns message', 400);
@@ -163,8 +146,8 @@ export async function handle(
   if (ecs) {
     options.ecs = ecs;
   }
-  const result = await resolveOrFail(question, options);
-  return wireResponse(result, options.timing);
+  const {result, first} = await resolveOrFail(question, options);
+  return wireResponse(result, first);
 }
 
 /**
@@ -246,9 +229,9 @@ export async function handleJson(
     cd: flag(params, 'cd'),
   });
 
-  const result = await resolveOrFail(question, options);
+  const {result, first} = await resolveOrFail(question, options);
   if (params.get('ct') === 'application/dns-message') {
-    return wireResponse(result, options.timing);
+    return wireResponse(result, first);
   }
 
   let json;
@@ -270,7 +253,7 @@ export async function handleJson(
   const headers = responseHeaders(
     'application/json; charset=UTF-8',
     result,
-    options.timing
+    first
   );
   return new Response(JSON.stringify(json), {headers});
 }

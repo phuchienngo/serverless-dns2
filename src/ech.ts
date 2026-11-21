@@ -8,6 +8,7 @@
  */
 
 import {ECH_FRONT_DOMAIN} from './config.js';
+import {getCloudflareRanges} from './cloudflare-ips.js';
 import {
   ALPN_HTTP,
   RCODE_NOERROR,
@@ -17,7 +18,6 @@ import {
   TYPE_A,
   TYPE_HTTPS,
 } from './constants.js';
-import {buildQuery} from './query.js';
 import {encodeName, parseAnswers, rcodeOf, u16} from './wire.js';
 import {makeRecord, respond} from './response.js';
 import {inBlocks, type Ipv4Block} from './ipv4.js';
@@ -30,20 +30,15 @@ import {
   svcbRdata,
 } from './svcb.js';
 import type {Question, Result} from './types.js';
+import {queryUpstream} from './upstream.js';
 
 const ECH_CONFIG_TTL_MS = 3600 * 1000;
 const SYNTHETIC_TTL = 300;
 
-/** Asks the upstream resolver; supplied by resolve.ts to avoid a cycle. */
-export type Ask = (wire: Uint8Array) => Promise<Uint8Array>;
-
-/** Cloudflare's IPv4 ranges; null if they cannot be had. */
-export type Ranges = () => Promise<Ipv4Block[] | null>;
-
 /** The shared Cloudflare ECHConfigList, asked for at most once an hour. */
-const echConfig = new Loaded(async (ask: Ask) => {
+const echConfig = new Loaded<void, Uint8Array>(async () => {
   const question = [...encodeName(ECH_FRONT_DOMAIN), ...u16(TYPE_HTTPS), 0, 1];
-  const resp = await ask(buildQuery(question, null));
+  const resp = await queryUpstream(question, null);
   for (const record of parseAnswers(resp)) {
     const value =
       record.type === TYPE_HTTPS && svcParam(resp, record, SVCPARAM_ECH);
@@ -63,12 +58,11 @@ export function resetEch(): void {
 async function behindCloudflare(
   name: string,
   ecs: number[] | null,
-  ask: Ask,
   ranges: Promise<Ipv4Block[] | null>
 ): Promise<boolean> {
   const question = [...encodeName(name), ...u16(TYPE_A), 0, 1];
   const [resp, blocks] = await Promise.all([
-    ask(buildQuery(question, ecs)),
+    queryUpstream(question, ecs),
     ranges,
   ]);
   return (
@@ -86,7 +80,7 @@ async function behindCloudflare(
  * Work that may be needed to add ECH, started alongside the HTTPS query so
  * that it does not add to the wait.
  */
-export interface EchProbe {
+interface EchProbe {
   cloudflare: Promise<boolean>;
   config: Promise<Uint8Array | null>;
   ranges: Promise<Ipv4Block[] | null>;
@@ -96,21 +90,19 @@ export interface EchProbe {
  * Starts the lookups addEch may need: is the name on Cloudflare (an A query),
  * the ECH key (usually already memoized) and Cloudflare's ranges (loaded
  * only for an HTTPS query).
- * @return null if `q` is not an HTTPS query.
+ * @return null for other types or if the client requests DNSSEC records.
  */
 export function startEchProbe(
   q: Question,
-  ecs: number[] | null,
-  ask: Ask,
-  ranges: Ranges
+  ecs: number[] | null
 ): EchProbe | null {
-  if (q.type !== TYPE_HTTPS) {
+  if (q.type !== TYPE_HTTPS || q.dnssecOk) {
     return null;
   }
-  const loaded = ranges().catch(() => null);
+  const loaded = getCloudflareRanges().catch(() => null);
   return {
-    cloudflare: behindCloudflare(q.name, ecs, ask, loaded).catch(() => false),
-    config: echConfig.get(ask),
+    cloudflare: behindCloudflare(q.name, ecs, loaded).catch(() => false),
+    config: echConfig.get(),
     ranges: loaded,
   };
 }

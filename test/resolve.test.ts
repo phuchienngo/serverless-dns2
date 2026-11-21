@@ -449,6 +449,28 @@ describe('forwarding to the upstream', () => {
     assert.equal(msg.answer.length, 1);
     assert.equal(upstream.calls.length, 2);
   });
+
+  test('a fast upstream answer cancels the hedge timer', async () => {
+    const setTimer = globalThis.setTimeout;
+    let fired = false;
+    globalThis.setTimeout = ((
+      fn: (...args: unknown[]) => void,
+      delay?: number,
+      ...args: unknown[]
+    ) =>
+      setTimer(() => {
+        if (delay === HEDGE_MAX_MS) fired = true;
+        fn(...args);
+      }, delay)) as typeof setTimeout;
+    try {
+      await ask(fresh(), T.A);
+      await new Promise(resolve => setTimer(resolve, HEDGE_MAX_MS + 10));
+      assert.equal(fired, false);
+      assert.equal(upstream.calls.length, 1);
+    } finally {
+      globalThis.setTimeout = setTimer;
+    }
+  });
 });
 
 describe('redirects (config.ts REDIRECTS)', () => {
@@ -865,12 +887,16 @@ describe('best-effort ECH for Cloudflare-hosted names', () => {
 
   /** An upstream where `cf*` names sit on Cloudflare and have no HTTPS record. */
   function cloudflareUpstream(
-    overrides: Partial<Record<string, number[]>> = {}
+    overrides: Partial<Record<string, number[]>> = {},
+    {refuseEcsA = false} = {}
   ) {
     return useUpstream(q => {
       const {name, type} = q.question[0];
       const base = {qname: name, qtype: type, opt: {do: q.opt?.do}};
       if (type === T.A) {
+        if (refuseEcsA && q.opt?.options.some(o => o.code === 8)) {
+          return makeResponse({...base, rcode: 5});
+        }
         const address = name.startsWith('cf') ? '104.16.0.5' : '192.0.2.5';
         return makeResponse({
           ...base,
@@ -921,6 +947,18 @@ describe('best-effort ECH for Cloudflare-hosted names', () => {
       'alpn, ech: keys in increasing order'
     );
     assert.ok(Buffer.from(record.rdata).includes(Buffer.from(ECH_CONFIG)));
+  });
+
+  test('the A probe for ECH uses the no-ECS fallback after REFUSED', async () => {
+    cloudflareUpstream({}, {refuseEcsA: true});
+    const {msg} = await ask(
+      'cf-refused.example.com',
+      T.HTTPS,
+      {},
+      withRanges({ip: '203.0.113.77'})
+    );
+    assert.equal(msg.answer.length, 1);
+    assert.deepEqual(paramKeys(msg.answer[0].rdata), [1, 5]);
   });
 
   test('adds ech to the upstream record and keeps the rest, in key order', async () => {

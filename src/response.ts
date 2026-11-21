@@ -291,22 +291,6 @@ export function rewriteOpt(resp: Uint8Array, edit: OptEdit): Uint8Array {
 }
 
 /**
- * Adds an option to the OPT record of a response.
- * @return The response unchanged if it has no OPT record.
- */
-export function addOptOption(resp: Uint8Array, option: number[]): Uint8Array {
-  return rewriteOpt(resp, {add: [option]});
-}
-
-/**
- * Removes every EDNS option with the given code from the OPT record.
- * @return The message unchanged if it has no such option or cannot be read.
- */
-export function removeOptOption(resp: Uint8Array, code: number): Uint8Array {
-  return rewriteOpt(resp, {remove: code});
-}
-
-/**
  * Removes OPT records from a response, for a client whose query had none.
  */
 export function stripOpt(resp: Uint8Array): Uint8Array {
@@ -325,14 +309,6 @@ export function stripOpt(resp: Uint8Array): Uint8Array {
   } catch {
     return resp; // Not a message we can edit.
   }
-}
-
-/**
- * Pads a response to a multiple of 468 bytes with an EDNS Padding option, for
- * a client that padded its query (RFC 7830, RFC 8467).
- */
-export function padResponse(resp: Uint8Array): Uint8Array {
-  return rewriteOpt(resp, {pad: true});
 }
 
 /**

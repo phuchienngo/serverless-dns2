@@ -33,6 +33,8 @@ const rules = {
     '^rebind-allowed\\.',
   ],
 };
+const nat64Reverse =
+  '2.2.8.d.8.b.d.5' + '.0'.repeat(16) + '.b.9.f.f.4.6.0.0.ip6.arpa';
 loadBlocklist(
   blockset.buffer.slice(
     blockset.byteOffset,
@@ -46,6 +48,15 @@ let n = 0;
 before(() => {
   upstream = mockUpstream(q => {
     const {name, type} = q.question[0];
+    if (name === `${nat64Reverse}.` && type === T.PTR) {
+      return makeResponse({
+        qname: name,
+        qtype: type,
+        answer: [
+          {type: T.CNAME, ttl: 60, rdata: nameRdata('tracker.example.net')},
+        ],
+      });
+    }
     // `cloak*` names hide behind a CNAME to a listed tracker.
     if (name.startsWith('cloak') && type === T.A) {
       const target = name.startsWith('cloakok')
@@ -81,12 +92,18 @@ before(() => {
 });
 after(() => upstream.restore());
 
-async function ask(name: string, type = T.A, query: QueryOptions = {}) {
+async function ask(
+  name: string,
+  type = T.A,
+  query: QueryOptions = {},
+  dns64 = false
+) {
   const q = parseQuestion(makeQuery(name, type, query));
   const result = await resolve(q, {
     env: {},
     ip: null,
     host: 'dns.test',
+    dns64,
   } as never);
   return parseMsg(result.body);
 }
@@ -155,6 +172,16 @@ describe('blocking', () => {
     const m = await ask('cloak1.shop.org');
     assert.ok(isBlockedAnswer(m));
     assert.equal(m.answer.length, 0);
+  });
+
+  test('a PTR blocked by CNAME uncloaking ends resolution with DNS64 on', async () => {
+    const from = upstream.calls.length;
+    const answer = await ask(nat64Reverse, T.PTR, {}, true);
+    assert.ok(isBlockedAnswer(answer));
+    assert.deepEqual(
+      upstream.calls.slice(from).map(call => call.query.question[0].name),
+      [`${nat64Reverse}.`]
+    );
   });
 
   test('a CNAME to an innocent target is kept', async () => {
