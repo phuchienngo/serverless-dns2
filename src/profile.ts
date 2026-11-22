@@ -6,7 +6,7 @@
  * the visitor's path, so the browser does.
  */
 
-import {getPinnableRanges} from './cloudflare-ips.js';
+import {getPinnableRanges, getV6Prefix} from './cloudflare-ips.js';
 
 /** The page's script. No backticks or template placeholders: it sits in a template. */
 export const PAGE_SCRIPT = `
@@ -26,7 +26,7 @@ export const PAGE_SCRIPT = `
       var lost = false;
       var timer = setTimeout(function () { lost = true; controller.abort(); }, TIMEOUT);
       var started = performance.now();
-      fetch('https://' + ip + '/cdn-cgi/trace', {
+      fetch('https://' + (ip.indexOf(':') >= 0 ? '[' + ip + ']' : ip) + '/cdn-cgi/trace', {
         mode: 'no-cors', cache: 'no-store', signal: controller.signal
       }).then(
         function () { return performance.now() - started; },
@@ -58,6 +58,14 @@ export const PAGE_SCRIPT = `
       out.push([n >>> 24, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join('.'));
     }
     return out;
+  }
+
+  // Cloudflare serves the domain at prefix::<the IPv4 address in two hex
+  // groups> wherever the IPv4 address serves it. An address that cannot be
+  // reached (no IPv6 here) is lost in the first pass and dropped.
+  function v6of(prefix, ip) {
+    var o = ip.split('.').map(Number);
+    return prefix + '::' + (o[0] * 256 + o[1]).toString(16) + ':' + (o[2] * 256 + o[3]).toString(16);
   }
 
   function median(values) {
@@ -95,6 +103,9 @@ export const PAGE_SCRIPT = `
       list.v4.forEach(function (cidr) {
         candidates = candidates.concat(addresses(cidr, PER_RANGE));
       });
+      if (list.v6prefix) {
+        candidates = candidates.concat(candidates.map(function (ip) { return v6of(list.v6prefix, ip); }));
+      }
       var done = 0;
       var alive = [];
       $('status').textContent = 'Trying ' + candidates.length + ' addresses...';
@@ -245,11 +256,12 @@ export function profileResponse(): Response {
 
 /**
  * The ranges the page may pick addresses from: those that answered for this
- * domain when the build tried them.
+ * domain when the build tried them, and the prefix that turns an IPv4 address
+ * of them into an IPv6 one.
  */
 export function rangesResponse(): Response {
   const v4 = getPinnableRanges();
-  return new Response(JSON.stringify({v4}), {
+  return new Response(JSON.stringify({v4, v6prefix: getV6Prefix()}), {
     headers: {
       'content-type': 'application/json',
       'cache-control': 'public, max-age=3600',

@@ -75,3 +75,18 @@ export async function pinnableRanges(
   );
   return ranges.filter((_, i) => results[i]);
 }
+
+/**
+ * Cloudflare serves a domain at `<prefix>::<an IPv4 address in two hex groups>`
+ * for every IPv4 address that serves it (checked by hand, undocumented). The
+ * prefix is that of the domain's own AAAA records.
+ * @param aaaa The domain's AAAA records, as the resolver writes them.
+ * @return The first three groups of the first record, or null if it has none
+ *     written as `a:b:c::...`.
+ */
+export function v6Prefix(aaaa: string[]): string | null {
+  const match = /^([0-9a-f]{1,4}:[0-9a-f]{1,4}:[0-9a-f]{1,4})::/i.exec(
+    aaaa[0] ?? ''
+  );
+  return match ? match[1].toLowerCase() : null;
+}

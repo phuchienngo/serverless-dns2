@@ -7,7 +7,8 @@ import {mkdir, readFile, writeFile} from 'node:fs/promises';
 import {dirname, join} from 'node:path';
 import {buildBlockset, dropMatched, parseDomain} from './blocklist-lib.js';
 import {parseCidrs} from '../src/ipv4.js';
-import {pinnableRanges} from './cloudflare-probe.js';
+import {resolve6} from 'node:dns/promises';
+import {pinnableRanges, v6Prefix} from './cloudflare-probe.js';
 import {
   BLOCKLIST,
   BLOCKLIST_PRECISION_BITS,
@@ -109,6 +110,14 @@ async function main() {
     throw new Error(`no Cloudflare range answered for ${PROBE_HOST}`);
   }
 
+  // The prefix of the domain's own IPv6 addresses, for the profile page.
+  const prefix6 = v6Prefix(await resolve6(PROBE_HOST).catch(() => []));
+  console.log(
+    prefix6
+      ? `IPv6 prefix of ${PROBE_HOST}: ${prefix6}`
+      : `no IPv6 prefix for ${PROBE_HOST}: the profile page will offer IPv4 only`
+  );
+
   console.log(`Encoding ${domains.size} domains`);
   const blockset = buildBlockset(domains, BLOCKLIST_PRECISION_BITS);
   // Written last, so a failed source leaves the previous files untouched.
@@ -119,7 +128,7 @@ async function main() {
   );
   await writeFile(
     join(dirname(outPath), 'cloudflare-ips.json'),
-    JSON.stringify({v4: cloudflare, pinnable})
+    JSON.stringify({v4: cloudflare, pinnable, v6prefix: prefix6})
   );
   await writeFile(outPath, blockset);
   console.log(`${blockset.byteLength} bytes -> ${outPath}`);

@@ -35,7 +35,7 @@ Every feature, the standard it follows, where it lives and which test covers it.
 | Redirects: a name answered with another name's A/AAAA (`medium.com` -> `voz.vn`), HTTPS/SVCB NODATA | none | `config.ts`, `upstream.ts`, `local.ts` | `resolve.test.ts` |
 | Routing: `/dns-query`, `/resolve`, `/apple`, `/cloudflare-ips.json`, 404 otherwise | none | `handlers.ts` | `handlers.test.ts` |
 | Apple DNS profile page: measures Cloudflare addresses in the browser, plain profile or one with `ServerAddresses` | Apple `com.apple.dnsSettings.managed` | `profile.ts` | `handlers.test.ts` |
-| Ranges offered by that page: the published Cloudflare ranges that answer for the domain, found by the build | none | `scripts/cloudflare-probe.ts`, `scripts/build-blocklist.ts`, `cloudflare-ips.ts` | `cloudflare-probe.test.ts`, `handlers.test.ts` |
+| Ranges offered by that page: the published Cloudflare ranges that answer for the domain, found by the build, and the IPv6 prefix of the domain's AAAA records, with which the page makes an IPv6 address from each IPv4 one (undocumented, checked by hand) | none | `scripts/cloudflare-probe.ts`, `scripts/build-blocklist.ts`, `cloudflare-ips.ts`, `profile.ts` | `cloudflare-probe.test.ts`, `handlers.test.ts` |
 | Blocklist (Ribbon filter in shards, subdomains covered) | none | `blockset.ts`, `blocklist.ts` | `blockset.test.ts`, `blocking.test.ts` |
 | Blocklist build: list parsing, dedupe, regex drop | hosts / adblock syntax | `scripts/blocklist-lib.ts` | `blockset.test.ts` |
 | Regex block/allow rules (allow wins), safety checks | none | `regexlist.ts` | `rules.test.ts`, `blocking.test.ts` |

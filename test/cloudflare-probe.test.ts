@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {describe, test} from 'node:test';
-import {sampleAddresses} from '../scripts/cloudflare-probe.js';
+import {sampleAddresses, v6Prefix} from '../scripts/cloudflare-probe.js';
 
 describe('sampleAddresses', () => {
   test('spreads eight addresses over the range', () => {
@@ -21,5 +21,19 @@ describe('sampleAddresses', () => {
       '103.21.244.1',
       '103.21.244.2',
     ]);
+  });
+});
+
+describe('v6Prefix', () => {
+  test('takes the first three groups of the first record', () => {
+    assert.equal(
+      v6Prefix(['2606:4700:3031::ac43:c637', '2606:4700:3033::6815:2c57']),
+      '2606:4700:3031'
+    );
+  });
+
+  test('is null with no record, or one not written with ::', () => {
+    assert.equal(v6Prefix([]), null);
+    assert.equal(v6Prefix(['2606:4700:3031:1:2:3:4:5']), null);
   });
 });

@@ -513,11 +513,15 @@ describe('the DNS profile page', () => {
         '104.16.0.0/13',
         '108.162.192.0/18', // Published, but it did not answer for this domain.
       ],
-      ['104.16.0.0/13']
+      ['104.16.0.0/13'],
+      '2606:4700:3031'
     );
     try {
       const body = await (await via('/cloudflare-ips.json')).json();
-      assert.deepEqual(body, {v4: ['104.16.0.0/13']});
+      assert.deepEqual(body, {
+        v4: ['104.16.0.0/13'],
+        v6prefix: '2606:4700:3031',
+      });
     } finally {
       resetCloudflareRanges();
     }
