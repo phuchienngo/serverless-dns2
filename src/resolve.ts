@@ -55,6 +55,14 @@ function dns64Key(q: Question, options: ResolveOptions): string {
   return `${cacheKey(options.host, q, ecsOf(options))}/dns64`;
 }
 
+/**
+ * Whether the client chose its subnet (`options.ecs` is an option, which may be
+ * an empty one asking not to be located) rather than leaving it to its IP.
+ */
+function clientChoseEcs(options: ResolveOptions): boolean {
+  return !!options.ecs;
+}
+
 /** The client subnet to send: the one chosen by the client, else its IP's. */
 function ecsOf(options: ResolveOptions): number[] | null {
   if (options.ecs !== undefined) {
@@ -138,10 +146,11 @@ async function shape(
     added.push(cookie);
   }
   const {ecs} = q;
+  const chosen = clientChoseEcs(options);
   return rewriteOpt(body, {
-    remove: options.ecs ? undefined : OPTION_ECS,
+    remove: chosen ? undefined : OPTION_ECS,
     replace:
-      options.ecs && ecs
+      chosen && ecs
         ? {code: OPTION_ECS, withData: data => clientEcsReply(data, ecs)}
         : undefined,
     add: added,

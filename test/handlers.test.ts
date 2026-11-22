@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import {afterEach, beforeEach, describe, test} from 'node:test';
 import {RCODE_BADVERS, RCODE_FORMERR} from '../src/constants.js';
-import {handle, handleJson} from '../src/handlers.js';
+import {handle, handleJson, route} from '../src/handlers.js';
 import {
   T,
   ip4,
@@ -181,9 +181,9 @@ describe('/dns-query (RFC 8484)', () => {
     assert.equal(upstream.calls.length, 0);
   });
 
-  test('the JSON API also answers on /dns-query?name=', async () => {
-    const res = await get(`/dns-query?name=${fresh()}`);
-    assert.match(res.headers.get('content-type')!, /json/);
+  test('/dns-query without dns still reports it missing', async () => {
+    const res = await get('/dns-query');
+    assert.equal(res.status, 400);
   });
 
   test('an upstream failure becomes SERVFAIL, not an HTTP error', async () => {
@@ -429,5 +429,31 @@ describe('dns64 parameter', () => {
     ]) {
       assert.equal(await aaaa(query), 0, query || 'no parameter');
     }
+  });
+});
+
+describe('routing', () => {
+  const via = (path: string, init?: RequestInit) =>
+    route(new Request(`${B}${path}`, init), ctx);
+
+  test('/dns-query?name= and /resolve answer the JSON API', async () => {
+    for (const path of ['/dns-query', '/resolve']) {
+      const res = await via(`${path}?name=${fresh()}`);
+      assert.match(res.headers.get('content-type')!, /json/, path);
+    }
+  });
+
+  test('a trailing slash is ignored; other paths are 404', async () => {
+    assert.equal((await via(`/resolve/?name=${fresh()}`)).status, 200);
+    assert.equal((await via('/other')).status, 404);
+  });
+
+  test('a POST with a name parameter is still a DoH POST', async () => {
+    const res = await via(`/dns-query?name=${fresh()}`, {
+      method: 'POST',
+      headers: {'content-type': 'application/dns-message'},
+      body: makeQuery(fresh(), T.A),
+    });
+    assert.match(res.headers.get('content-type')!, /dns-message/);
   });
 });

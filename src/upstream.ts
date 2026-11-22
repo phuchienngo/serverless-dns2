@@ -90,7 +90,7 @@ async function forward(wire: Uint8Array): Promise<UpstreamReply> {
   const backup = new Promise<UpstreamReply>((resolve, reject) => {
     timer = setTimeout(() => {
       hedged = new AbortController();
-      post(UPSTREAM_BACKUP || UPSTREAM, wire, hedged).then(resolve, reject);
+      post(UPSTREAM_BACKUP ?? UPSTREAM, wire, hedged).then(resolve, reject);
     }, delay);
   });
   try {

@@ -116,10 +116,7 @@ export async function handle(
     } else {
       const param = url.searchParams.get('dns');
       if (param === null) {
-        // Convenience: the JSON API also answers on this path.
-        return url.searchParams.has('name')
-          ? handleJson(request, ctx)
-          : textResponse('missing dns parameter', 400);
+        return textResponse('missing dns parameter', 400);
       }
       if (param.length > MAX_DNS_PARAM) {
         return textResponse('uri too long', 414);
@@ -229,11 +226,18 @@ export async function handleJson(
     cd: flag(params, 'cd'),
   });
 
-  let {result, first} = await resolveOrFail(question, options);
-  if (params.get('ct') === 'application/dns-message') {
-    return wireResponse(result, first);
-  }
+  const {result, first} = await resolveOrFail(question, options);
+  return params.get('ct') === 'application/dns-message'
+    ? wireResponse(result, first)
+    : jsonResponse(question, result, first);
+}
 
+/** @return The JSON form of an answer, or of SERVFAIL if it cannot be read. */
+function jsonResponse(
+  question: Question,
+  result: Result,
+  first: number
+): Response {
   let json;
   try {
     json = toJson(result.body);
@@ -247,4 +251,26 @@ export async function handleJson(
     first
   );
   return new Response(JSON.stringify(json), {headers});
+}
+
+/**
+ * Routes a request by its path: `/dns-query` (a GET with `name` and no `dns`
+ * is the JSON API too) and `/resolve`.
+ */
+export function route(
+  request: Request,
+  ctx: Context
+): Promise<Response> | Response {
+  const url = new URL(request.url);
+  const path = url.pathname.replace(/\/+$/, '');
+  const params = url.searchParams;
+  if (path === '/resolve') {
+    return handleJson(request, ctx);
+  }
+  if (path !== '/dns-query') {
+    return textResponse('not found', 404);
+  }
+  const json =
+    request.method === 'GET' && !params.has('dns') && params.has('name');
+  return json ? handleJson(request, ctx) : handle(request, ctx);
 }
