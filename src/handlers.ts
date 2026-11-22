@@ -142,7 +142,7 @@ export async function handle(
   }
 
   const options = makeOptions(url, ctx);
-  const ecs = clientEcs(question.ecs);
+  const ecs = clientEcs(question.ecs, ctx.ip);
   if (ecs) {
     options.ecs = ecs;
   }
@@ -218,10 +218,11 @@ export async function handleJson(
   const options = makeOptions(url, ctx);
   const subnet = params.get('edns_client_subnet');
   if (subnet) {
-    options.ecs = parseEcsParam(subnet);
-    if (!options.ecs) {
+    const ecs = parseEcsParam(subnet, ctx.ip);
+    if (ecs === undefined) {
       return textResponse('invalid edns_client_subnet', 400);
     }
+    options.ecs = ecs;
   }
 
   const question = makeQuestion(name, type, {

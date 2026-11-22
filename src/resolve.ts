@@ -55,12 +55,12 @@ function dns64Key(q: Question, options: ResolveOptions): string {
   return `${cacheKey(options.host, q, ecsOf(options))}/dns64`;
 }
 
-/** The client subnet to send: the one chosen by the client, else its IP's. */
+/** The client subnet to send upstream. */
 function ecsOf(options: ResolveOptions): number[] | null {
   if (options.ecs !== undefined) {
     return options.ecs;
   }
-  return options.ip ? makeEcs(options.ip) : null;
+  return makeEcs(options.ip);
 }
 
 /**

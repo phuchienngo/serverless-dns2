@@ -56,8 +56,8 @@ export interface Context {
 export interface ResolveOptions extends Context {
   host: string;
   /**
-   * Overrides the subnet derived from `ip`; null sends none. An option with
-   * source prefix 0 is the client asking not to be located.
+   * The ECS option selected for this request. Null disables ECS. A source
+   * prefix of 0 preserves the client's request for no location.
    */
   ecs?: number[] | null;
   dns64?: boolean;

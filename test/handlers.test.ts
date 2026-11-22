@@ -15,6 +15,7 @@ import {
 } from './helpers.js';
 
 const ctx = {env: {}, ip: null} as never;
+const located = {env: {}, ip: '203.0.113.77'} as never;
 const B = 'https://dns.test';
 let upstream: ReturnType<typeof mockUpstream>;
 let n = 0;
@@ -211,25 +212,41 @@ describe('/dns-query (RFC 8484)', () => {
     assert.equal(m.opt, undefined);
   });
 
-  test('DO, CD and a client subnet reach the upstream', async () => {
+  test('DO, CD and the connecting subnet reach the upstream', async () => {
     const wire = makeQuery(fresh(), T.A, {
       do: true,
       cd: true,
       ecs: {family: 1, prefix: 24, address: [198, 51, 100]},
     });
-    await post(wire);
+    await handle(new Request(`${B}/dns-query?dns=${b64url(wire)}`), located);
     const sent = upstream.calls[0].query;
     assert.equal(sent.opt?.do, true);
     assert.equal(sent.cd, true);
     assert.deepEqual(
       [...sent.opt!.options.find(o => o.code === 8)!.data],
-      [0, 1, 24, 0, 198, 51, 100]
+      [0, 1, 24, 0, 203, 0, 113]
     );
+  });
+
+  test('uses the client ECS address when the connecting IP is missing or invalid', async () => {
+    for (const ip of [null, 'invalid']) {
+      const wire = makeQuery(fresh(), T.A, {
+        ecs: {family: 1, prefix: 32, address: [198, 51, 100, 9]},
+      });
+      const index = upstream.calls.length;
+      await handle(new Request(`${B}/dns-query?dns=${b64url(wire)}`), {
+        env: {},
+        ip,
+      });
+      const subnet = upstream.calls[index].query.opt?.options.find(
+        o => o.code === 8
+      );
+      assert.deepEqual([...(subnet?.data ?? [])], [0, 1, 24, 0, 198, 51, 100]);
+    }
   });
 });
 
 describe('a client that asks not to be located (ECS source prefix 0)', () => {
-  const located = {env: {}, ip: '203.0.113.77'} as never;
   const send = (ecs?: {family: 1 | 2; prefix: number; address: number[]}) =>
     handle(
       new Request(`${B}/dns-query`, {
@@ -330,12 +347,64 @@ describe('/resolve (Google JSON API)', () => {
     assert.equal(upstream.calls[0].query.cd, true);
   });
 
-  test('edns_client_subnet is sent upstream', async () => {
-    await json(`/resolve?name=${fresh()}&edns_client_subnet=203.0.113.0/24`);
+  test('edns_client_subnet can limit the prefix of the connecting IP', async () => {
+    const res = await handleJson(
+      new Request(
+        `${B}/resolve?name=${fresh()}&edns_client_subnet=198.51.100.9/16`
+      ),
+      located
+    );
+    assert.equal(res.status, 200);
     const option = upstream.calls[0].query.opt!.options.find(
       o => o.code === 8
     )!;
-    assert.deepEqual([...option.data], [0, 1, 24, 0, 203, 0, 113]);
+    assert.deepEqual([...option.data], [0, 1, 16, 0, 203, 0]);
+  });
+
+  test('a JSON subnet without a prefix uses the connecting IP family and default', async () => {
+    await handleJson(
+      new Request(
+        `${B}/resolve?name=${fresh()}&edns_client_subnet=198.51.100.9`
+      ),
+      {env: {}, ip: '2001:db8:1:2::9'} as never
+    );
+    const option = upstream.calls[0].query.opt!.options.find(
+      o => o.code === 8
+    )!;
+    assert.deepEqual([...option.data], [0, 2, 48, 0, 0x20, 1, 0xd, 0xb8, 0, 1]);
+  });
+
+  test('uses the JSON subnet when the connecting IP is missing or invalid', async () => {
+    for (const [ip, param] of [
+      [null, '2001:db8:1:2::9'],
+      ['invalid', '2001:db8:1:2::9/64'],
+    ] as const) {
+      const index = upstream.calls.length;
+      const res = await handleJson(
+        new Request(`${B}/resolve?name=${fresh()}&edns_client_subnet=${param}`),
+        {env: {}, ip}
+      );
+      assert.equal(res.status, 200);
+      const subnet = upstream.calls[index].query.opt?.options.find(
+        o => o.code === 8
+      );
+      assert.deepEqual(
+        [...(subnet?.data ?? [])],
+        [0, 2, 48, 0, 0x20, 1, 0xd, 0xb8, 0, 1]
+      );
+    }
+  });
+
+  test('a JSON subnet of /0 sends no connecting IP upstream', async () => {
+    const res = await handleJson(
+      new Request(`${B}/resolve?name=${fresh()}&edns_client_subnet=::/0`),
+      located
+    );
+    assert.equal(res.status, 200);
+    const option = upstream.calls[0].query.opt!.options.find(
+      o => o.code === 8
+    )!;
+    assert.deepEqual([...option.data], [0, 2, 0, 0]);
   });
 
   test('type PTR with an IP converts it to the reverse name', async () => {

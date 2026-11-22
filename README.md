@@ -18,7 +18,7 @@ then set `dns_ddr_version 1` and `networkmonitor_async_privdns_resolution 1` via
 
 ## Extras
 
-- Honours a client-supplied ECS (dnsproxy / AdGuard Home `edns-addr`). Source prefix 0, such as Firefox's `::/0`, is sent as supplied (RFC 7871 7.1.2). When the resolver sends ECS, it sends one query with ECS and one without in parallel. The fallback is used if the ECS query returns REFUSED (RFC 7871 7.1.3).
+- ECS uses the Cloudflare `CF-Connecting-IP` for both DoH and JSON, with a valid client-supplied subnet as a fallback when the header is absent or invalid. A client's ECS value can request a shorter prefix than /24 (IPv4) or /48 (IPv6), or opt out with a source prefix of 0 (RFC 7871 7.1.2). When the resolver sends ECS, it sends one query with ECS and one without in parallel. The fallback is used if the ECS query returns REFUSED (RFC 7871 7.1.3).
 - `ANY` queries get a minimal HINFO locally (`BLOCK_ANY`); `REDIRECTS` in `src/config.ts` answers a name with another name's A/AAAA records (now `medium.com` -> `voz.vn`); not for a query with DO, since what is made here carries no signature.
 - `/resolve?name=8.8.8.8&type=PTR` converts an IP to its reverse name.
 - The DO and CD bits of a query are passed to the upstream (DNSSEC records and `AD` come back as asked; a query with AD but no DO also gets `AD`). Answers made

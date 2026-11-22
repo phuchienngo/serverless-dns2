@@ -809,22 +809,26 @@ describe('client subnet: a client that asks not to be located (RFC 7871 7.1.2)',
 });
 
 describe('client subnet: what comes back for a subnet the client sent', () => {
-  test('the source prefix is the one the client sent, also when it was clamped to /24 (7.2.2)', async () => {
+  test('the wire reply echoes the client subnet after sending the connecting subnet', async () => {
     useUpstream(q => {
-      const sent = q.opt!.options.find(o => o.code === 8)!.data;
-      // An upstream that echoes the subnet it was given, with scope 24.
+      const sent = q.opt!.options.find(o => o.code === 8)?.data;
       return makeResponse({
         qname: q.question[0].name,
         qtype: T.A,
         opt: {
-          options: [
-            {code: 8, data: [sent[0], sent[1], sent[2], 24, ...sent.slice(4)]},
-          ],
+          options: sent
+            ? [
+                {
+                  code: 8,
+                  data: [sent[0], sent[1], sent[2], 16, ...sent.slice(4)],
+                },
+              ]
+            : [],
         },
       });
     });
     const wire = makeQuery(fresh(), T.A, {
-      ecs: {family: 1, prefix: 32, address: [198, 51, 100, 9]},
+      ecs: {family: 1, prefix: 24, address: [198, 51, 100]},
       padding: 1,
     });
     const res = await handle(
@@ -833,11 +837,13 @@ describe('client subnet: what comes back for a subnet the client sent', () => {
         headers: {'content-type': 'application/dns-message'},
         body: wire as never,
       }),
-      {env: {}, ip: null} as never
+      {env: {}, ip: '203.0.113.77'} as never
     );
+    const sent = upstream.calls[0].query.opt!.options.find(o => o.code === 8)!;
+    assert.deepEqual([...sent.data], [0, 1, 24, 0, 203, 0, 113]);
     const msg = parseMsg(new Uint8Array(await res.arrayBuffer()));
     const data = msg.opt!.options.find(o => o.code === 8)!.data;
-    assert.deepEqual([...data], [0, 1, 32, 24, 198, 51, 100, 9]);
+    assert.deepEqual([...data], [0, 1, 24, 24, 198, 51, 100]);
     assert.equal(msg.opt!.options.at(-1)?.code, 12);
     assert.equal(msg.size % 468, 0);
   });
