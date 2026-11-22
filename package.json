@@ -10,10 +10,10 @@
     "test": "bun test --timeout 60000"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20261117.1",
+    "@cloudflare/workers-types": "^5.20261121.1",
     "@types/node": "^26.6.6",
     "prettier": "^3.10.1",
     "typescript": "^7.0.2",
-    "wrangler": "^4.164.0"
+    "wrangler": "^4.166.0"
   }
 }
