@@ -5,6 +5,11 @@ import {afterEach, beforeEach, describe, test} from 'node:test';
 import {RCODE_BADVERS, RCODE_FORMERR} from '../src/constants.js';
 import {handle, handleJson, route} from '../src/handlers.js';
 import {
+  loadCloudflareRanges,
+  resetCloudflareRanges,
+} from '../src/cloudflare-ips.js';
+import {PAGE_SCRIPT} from '../src/profile.js';
+import {
   T,
   ip4,
   makeQuery,
@@ -461,5 +466,31 @@ describe('routing', () => {
       body: makeQuery(fresh(), T.A),
     });
     assert.match(res.headers.get('content-type')!, /dns-message/);
+  });
+});
+
+describe('the DNS profile page', () => {
+  const via = (path: string) => route(new Request(`${B}${path}`), ctx);
+
+  test('/apple is an HTML page with a script that parses', async () => {
+    const res = await via('/apple');
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get('content-type')!, /text\/html/);
+    const html = await res.text();
+    assert.ok(html.includes('id="start"') && html.includes('mobileconfig'));
+    assert.doesNotThrow(() => new Function(PAGE_SCRIPT));
+  });
+
+  test('/cloudflare-ips.json lists the published ranges that can be pinned', async () => {
+    loadCloudflareRanges([
+      '104.16.0.0/13', // Pinnable.
+      '108.162.192.0/18', // Published, but it did not answer for this domain.
+    ]);
+    try {
+      const body = await (await via('/cloudflare-ips.json')).json();
+      assert.deepEqual(body, {v4: ['104.16.0.0/13']});
+    } finally {
+      resetCloudflareRanges();
+    }
   });
 });

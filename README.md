@@ -12,6 +12,8 @@ Dev (with [Bun](https://bun.sh)): `bun install`, `bun run check` (tsc), `bun tes
 
 Deploy: push to `main` (GitHub Actions builds the lists and runs `wrangler deploy`), or `bun run deploy` from your machine.
 
+Apple DNS profile: open `https://<host>/apple` in a browser, press Measure, and the page tries addresses of Cloudflare's network from where you are, ticks the ones that answer fastest with the fewest lost packets, and makes a `.mobileconfig` that connects to them (`ServerAddresses`). Which addresses are offered is `PINNABLE_RANGES` in `src/config.ts`. Installing the profile is still done by hand in System Settings. Connecting to a Cloudflare address other than the zone's own is not a documented feature, so it may stop working.
+
 DDR (Android 16+ Private DNS): add in your zone
 `_dns.dns.example.com  SVCB  1 dns.example.com. alpn="h2,h3" dohpath="/dns-query{?dns}"`
 then set `dns_ddr_version 1` and `networkmonitor_async_privdns_resolution 1` via `adb shell device_config put connectivity ...`.

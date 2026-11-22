@@ -10,6 +10,7 @@ import {makeQuestion, MultipleQuestionsError, parseQuestion} from './query.js';
 import {clientEcs, parseEcsParam, reverseName} from './ecs.js';
 import {toJson} from './format.js';
 import {formErrorHeader} from './response.js';
+import {profileResponse, rangesResponse} from './profile.js';
 import {resolve, upstreamFailure} from './resolve.js';
 import type {Context, Question, ResolveOptions, Result} from './types.js';
 
@@ -266,6 +267,12 @@ export function route(
   const params = url.searchParams;
   if (path === '/resolve') {
     return handleJson(request, ctx);
+  }
+  if (path === '/apple') {
+    return profileResponse();
+  }
+  if (path === '/cloudflare-ips.json') {
+    return rangesResponse();
   }
   if (path !== '/dns-query') {
     return textResponse('not found', 404);
