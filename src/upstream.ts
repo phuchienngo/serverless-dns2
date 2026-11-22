@@ -120,30 +120,23 @@ export function queryFlags(q: Question): QueryFlags {
 }
 
 /**
- * Sends one query with ECS and one without. The ECS answer takes precedence
- * unless it is REFUSED (RFC 7871 7.1.3).
+ * Sends one query with ECS and one without, in parallel. The ECS answer takes
+ * precedence unless it is REFUSED (RFC 7871 7.1.3). Both are hedged, so a slow
+ * upstream connection does not hold either of them back.
  */
 export async function queryUpstream(
   question: number[],
   ecs: number[] | null,
   flags?: QueryFlags
 ): Promise<UpstreamReply> {
-  const wire = buildQuery(question, ecs, flags);
+  const preferred = forward(buildQuery(question, ecs, flags));
   if (!ecs) {
-    return forward(wire);
+    return preferred;
   }
-  const started = performance.now();
-  const preferred = post(UPSTREAM, wire, new AbortController());
-  const controller = new AbortController();
-  const fallback = post(UPSTREAM, buildQuery(question, null, flags), controller);
-  void fallback.catch(() => {});
-  try {
-    const reply = await preferred;
-    recordLatency(started);
-    return rcodeOf(reply.body) === RCODE_REFUSED ? await fallback : reply;
-  } finally {
-    controller.abort();
-  }
+  const fallback = forward(buildQuery(question, null, flags));
+  void fallback.catch(() => {}); // Only read if the ECS answer is REFUSED.
+  const reply = await preferred;
+  return rcodeOf(reply.body) === RCODE_REFUSED ? fallback : reply;
 }
 
 /**

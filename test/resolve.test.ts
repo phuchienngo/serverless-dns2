@@ -720,7 +720,7 @@ describe('client subnet: a server that refuses it (RFC 7871 7.1.3)', () => {
     assert.equal((await answer).msg.answer[0].ttl, 300);
   });
 
-  test('a slow ECS lookup still sends just one request per variant', async () => {
+  test('a slow ECS lookup is hedged, the fallback is not', async () => {
     let release!: () => void;
     const preferred = new Promise<void>(resolve => (release = resolve));
     useUpstream(async q => {
@@ -733,7 +733,7 @@ describe('client subnet: a server that refuses it (RFC 7871 7.1.3)', () => {
     await answer;
     assert.deepEqual(
       upstream.calls.map(call => hasEcs(call.query)),
-      [true, false]
+      [true, false, true]
     );
   });
 
