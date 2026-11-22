@@ -142,7 +142,11 @@ export const PAGE_SCRIPT = `
 
   function profile(ips) {
     var id = host.split('.').reverse().join('.') + '.dns';
-    var servers = ips.map(function (ip) { return '<string>' + ip + '</string>'; }).join('');
+    var servers = ips.length
+      ? '<key>ServerAddresses</key><array>' +
+        ips.map(function (ip) { return '<string>' + ip + '</string>'; }).join('') +
+        '</array>'
+      : '';
     return '<?xml version="1.0" encoding="UTF-8"?>\\n' +
       '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\\n' +
       '<plist version="1.0"><dict>' +
@@ -157,7 +161,7 @@ export const PAGE_SCRIPT = `
       '<key>DNSSettings</key><dict>' +
       '<key>DNSProtocol</key><string>HTTPS</string>' +
       '<key>ServerURL</key><string>https://' + host + '/dns-query</string>' +
-      '<key>ServerAddresses</key><array>' + servers + '</array></dict>' +
+      servers + '</dict>' +
       '<key>OnDemandRules</key><array>' +
       '<dict><key>Action</key><string>EvaluateConnection</string>' +
       '<key>ActionParameters</key><array><dict>' +
@@ -174,11 +178,7 @@ export const PAGE_SCRIPT = `
       '</dict></array></dict></plist>\\n';
   }
 
-  function download() {
-    var ips = Array.prototype.slice.call(document.querySelectorAll('input[data-ip]'))
-      .filter(function (box) { return box.checked; })
-      .map(function (box) { return box.dataset.ip; });
-    if (!ips.length) { $('status').textContent = 'Tick at least one address.'; return; }
+  function save(ips) {
     var blob = new Blob([profile(ips)], {type: 'application/x-apple-aspen-config'});
     var link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
@@ -186,9 +186,18 @@ export const PAGE_SCRIPT = `
     link.click();
   }
 
+  function download() {
+    var ips = Array.prototype.slice.call(document.querySelectorAll('input[data-ip]'))
+      .filter(function (box) { return box.checked; })
+      .map(function (box) { return box.dataset.ip; });
+    if (!ips.length) { $('status').textContent = 'Tick at least one address.'; return; }
+    save(ips);
+  }
+
   $('host').textContent = host;
   $('start').onclick = measure;
   $('download').onclick = download;
+  $('plain').onclick = function () { save([]); };
 })();
 `;
 
@@ -208,16 +217,21 @@ const PAGE = `<!doctype html>
 </head>
 <body>
 <h1>Apple DNS profile</h1>
-<p>Finds the Cloudflare addresses that work best from your network, then makes a
-profile for <b id="host"></b> that connects to them.</p>
+<p>A DNS profile for <b id="host"></b>.</p>
+<h2>Normal network</h2>
+<p><button id="plain">Download profile</button></p>
+<p>The profile connects the usual way, with no address pinned.</p>
+<h2>Weak network</h2>
+<p>Finds the Cloudflare addresses that work best from where you are, then makes a
+profile that connects to them.</p>
 <p><button id="start">Measure</button></p>
 <p id="status"></p>
 <div id="results" hidden>
 <table><thead><tr><th></th><th>Address</th><th>Median</th><th>Lost</th></tr></thead>
 <tbody id="rows"></tbody></table>
-<p><button id="download">Download profile</button></p>
-<p>Open the downloaded file, then install it in System Settings, Privacy &amp; Security, Profiles.</p>
+<p><button id="download">Download profile with these addresses</button></p>
 </div>
+<p>Open the downloaded file, then install it in System Settings, Privacy &amp; Security, Profiles.</p>
 <script>${PAGE_SCRIPT}</script>
 </body>
 </html>

@@ -481,6 +481,32 @@ describe('the DNS profile page', () => {
     assert.doesNotThrow(() => new Function(PAGE_SCRIPT));
   });
 
+  test('the plain button makes a profile with no addresses pinned', () => {
+    const elements: Record<string, {onclick?: () => void}> = {};
+    const saved: string[] = [];
+    const document = {
+      getElementById: (id: string) => (elements[id] ??= {}),
+      createElement: () => ({click() {}}),
+      querySelectorAll: () => [],
+    };
+    class FakeBlob {
+      constructor(parts: string[]) {
+        saved.push(parts.join(''));
+      }
+    }
+    new Function('document', 'location', 'Blob', 'URL', 'crypto', PAGE_SCRIPT)(
+      document,
+      {hostname: 'dns.example'},
+      FakeBlob,
+      {createObjectURL: () => 'blob:'},
+      {randomUUID: () => 'abc'}
+    );
+    elements.plain.onclick!();
+    const profile = saved[0];
+    assert.match(profile, /<string>https:\/\/dns.example\/dns-query<\/string>/);
+    assert.ok(!profile.includes('ServerAddresses'));
+  });
+
   test('/cloudflare-ips.json lists the published ranges that can be pinned', async () => {
     loadCloudflareRanges([
       '104.16.0.0/13', // Pinnable.
