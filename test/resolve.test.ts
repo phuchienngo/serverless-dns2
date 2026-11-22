@@ -609,9 +609,9 @@ describe('client subnet (RFC 7871)', () => {
     );
   });
 
-  test('no IP, no subnet', async () => {
+  test('no IP: source prefix 0, so the upstream makes up no subnet', async () => {
     await ask(fresh(), T.A);
-    assert.equal(ecsOf(upstream.calls[0]), undefined);
+    assert.deepEqual([...ecsOf(upstream.calls[0])!], [0, 1, 0, 0]);
   });
 
   test('a subnet in the options overrides the IP; null sends none', async () => {
@@ -622,7 +622,7 @@ describe('client subnet (RFC 7871)', () => {
       [0, 1, 24, 0, 198, 51, 100]
     );
     await ask(fresh(), T.A, {}, {ip: '203.0.113.77', ecs: null});
-    assert.equal(ecsOf(upstream.calls[1]), undefined);
+    assert.deepEqual([...ecsOf(upstream.calls[1])!], [0, 1, 0, 0]);
   });
 
   test('answers are cached per subnet', async () => {
@@ -662,7 +662,9 @@ describe('client subnet (RFC 7871)', () => {
 });
 
 describe('client subnet: a server that refuses it (RFC 7871 7.1.3)', () => {
-  const hasEcs = (query: Msg) => !!query.opt?.options.some(o => o.code === 8);
+  /** Whether the query carries a subnet (source prefix above 0). */
+  const hasEcs = (query: Msg) =>
+    !!query.opt?.options.some(o => o.code === 8 && o.data[2] > 0);
   /** Refuses any query with a client subnet, as Akamai's servers do. */
   const refuseEcs = (q: Msg) =>
     hasEcs(q)
@@ -916,7 +918,10 @@ describe('best-effort ECH for Cloudflare-hosted names', () => {
       const {name, type} = q.question[0];
       const base = {qname: name, qtype: type, opt: {do: q.opt?.do}};
       if (type === T.A) {
-        if (refuseEcsA && q.opt?.options.some(o => o.code === 8)) {
+        if (
+          refuseEcsA &&
+          q.opt?.options.some(o => o.code === 8 && o.data[2] > 0)
+        ) {
           return makeResponse({...base, rcode: 5});
         }
         const address = name.startsWith('cf') ? '104.16.0.5' : '192.0.2.5';

@@ -191,10 +191,16 @@ export function makeQuestion(
   };
 }
 
+/** An ECS option with source prefix 0: "do not locate the client". */
+const NO_SUBNET = [...u16(OPTION_ECS), ...u16(4), ...u16(1), 0, 0];
+
 /**
  * Builds a query for the upstream resolver, with an EDNS0 OPT record.
  * @param question Question section (name, type, class).
- * @param ecs EDNS client-subnet option bytes, if any.
+ * @param ecs EDNS client-subnet option bytes. Without one the query carries an
+ *     ECS option with source prefix 0 (RFC 7871 7.1.2): a resolver such as
+ *     Google's would otherwise make up a subnet from the address this Worker
+ *     connects from, which is Cloudflare's.
  *     `dnssec` sets the DO bit, `cd` sets the CD bit.
  */
 export function buildQuery(
@@ -206,7 +212,7 @@ export function buildQuery(
     ad = false,
   }: {dnssec?: boolean; cd?: boolean; ad?: boolean} = {}
 ): Uint8Array {
-  const option = ecs || [];
+  const option = ecs ?? NO_SUBNET;
   const opt = [
     0, // Root name.
     ...u16(TYPE_OPT),

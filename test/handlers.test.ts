@@ -246,12 +246,18 @@ describe('a client that asks not to be located (ECS source prefix 0)', () => {
 
   test('no subnet of the connecting IP goes upstream: source prefix 0 does', async () => {
     await send({family: 2, prefix: 0, address: []});
-    assert.deepEqual(subnetsSent(), [[0, 2, 0, 0], []]);
+    assert.deepEqual(subnetsSent(), [
+      [0, 2, 0, 0],
+      [0, 1, 0, 0],
+    ]);
   });
 
   test('a query with no ECS still gets its connecting IP as /24', async () => {
     await send();
-    assert.deepEqual(subnetsSent(), [[0, 1, 24, 0, 203, 0, 113], []]);
+    assert.deepEqual(subnetsSent(), [
+      [0, 1, 24, 0, 203, 0, 113],
+      [0, 1, 0, 0],
+    ]);
   });
 });
 
