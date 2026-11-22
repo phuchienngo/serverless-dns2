@@ -25,7 +25,7 @@ jobs:
         run: bun run test
       - run: bun run build-lists
       - name: Smoke test Worker
-        run: node --test test/worker.smoke.ts
+        run: bun test --timeout 20000 ./test/worker.smoke.ts
         timeout-minutes: 1
       - name: Deploy
         env:
