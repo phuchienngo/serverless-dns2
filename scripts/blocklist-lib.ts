@@ -219,7 +219,13 @@ export function buildBlockset(domains: Set<string>, bits: number): Uint8Array {
     h0s[shard].push(h0);
     h1s[shard].push(h1);
   }
-  const solved = h0s.map((h0, shard) => solveShard(h0, h1s[shard], bits));
+  const solved = h0s.map((h0, shard) => {
+    const result = solveShard(h0, h1s[shard], bits);
+    if ((shard + 1) % 10 === 0 || shard + 1 === shards) {
+      console.log(`  shard ${shard + 1}/${shards} solved`);
+    }
+    return result;
+  });
   const slots = solved.reduce((sum, {values}) => sum + values.length, 0);
 
   const tableStart = HEADER_WORDS + shards;
@@ -238,6 +244,7 @@ export function buildBlockset(domains: Set<string>, bits: number): Uint8Array {
   });
   const out = new Uint8Array(littleEndianWords(file.buffer).buffer);
 
+  console.log('Checking that every domain decodes');
   const decoded = decodeBlockset(out.buffer);
   if (
     decoded.count !== kept.length ||

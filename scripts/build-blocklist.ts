@@ -98,6 +98,9 @@ async function main() {
     .map(line => line.trim())
     .filter(Boolean);
   parseCidrs(cloudflare);
+  console.log(
+    `Trying ${cloudflare.length} Cloudflare ranges for ${PROBE_HOST}`
+  );
   const pinnable = await pinnableRanges(cloudflare, PROBE_HOST);
   console.log(
     `${cloudflare.length} Cloudflare IPv4 ranges, ${pinnable.length} answer for ${PROBE_HOST}: ${pinnable.join(' ')}`
@@ -106,6 +109,7 @@ async function main() {
     throw new Error(`no Cloudflare range answered for ${PROBE_HOST}`);
   }
 
+  console.log(`Encoding ${domains.size} domains`);
   const blockset = buildBlockset(domains, BLOCKLIST_PRECISION_BITS);
   // Written last, so a failed source leaves the previous files untouched.
   await mkdir(dirname(outPath), {recursive: true});

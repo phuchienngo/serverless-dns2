@@ -68,7 +68,9 @@ export async function pinnableRanges(
       const found = await Promise.all(
         sampleAddresses(cidr).map(address => answers(address, host))
       );
-      return found.some(Boolean);
+      const answered = found.filter(Boolean).length;
+      console.log(`${cidr}: ${answered}/${found.length} addresses answered`);
+      return answered > 0;
     })
   );
   return ranges.filter((_, i) => results[i]);
