@@ -1,6 +1,6 @@
 # Features, standards and tests
 
-Code layout: `constants.ts` (record types, rcodes, option codes, EDE, local TTLs), `config.ts` (tunable settings only), the DNS messages in `wire.ts` (numbers, names, `readRecords`, the base of every record reader and editor), `query.ts` (parsing a client's query, making upstream queries) and `response.ts` (making responses, editing relayed ones, TTLs), with `svcb.ts` for SVCB/HTTPS parameters. `loaded.ts` memoizes what is fetched once per isolate (the ECH key); the lists built by `build-lists` are bundled into the Worker (`worker.ts`). `resolve.ts` orders the steps (local answer, blocking, cache, upstream) and finishes the response; `local.ts` (answers without upstream), `redirects.ts` (REDIRECTS), `blocking.ts` (blocklist, rules, and the checks of an answer: CNAME uncloaking, rebinding) and `upstream.ts` (hedging, request sharing) hold the steps.
+Code layout: `constants.ts` (record types, rcodes, option codes, EDE, local TTLs), `config.ts` (tunable settings only), the DNS messages in `wire.ts` (numbers, names, `readRecords`, the base of every record reader and editor), `query.ts` (parsing a client's query, making upstream queries) and `response.ts` (making responses, editing relayed ones, TTLs), with `svcb.ts` for SVCB/HTTPS parameters. `handlers.ts` (DoH and JSON handlers and `route()`, which `worker.ts` calls for every request), `profile.ts` (the `/apple` page and `/cloudflare-ips.json`), `loaded.ts` memoizes what is fetched once per isolate (the ECH key); the lists built by `build-lists` (the blocklist, rules and Cloudflare ranges) are bundled into the Worker (`worker.ts`). `ipv4.ts` and `cloudflare-ips.ts` hold IPv4 ranges. `resolve.ts` orders the steps (local answer, blocking, cache, upstream) and finishes the response; `local.ts` (answers without upstream), `redirects.ts` (REDIRECTS), `blocking.ts` (blocklist, rules, and the checks of an answer: CNAME uncloaking, rebinding) and `upstream.ts` (hedging, request sharing) hold the steps.
 
 Every feature, the standard it follows, where it lives and which test covers it.
 `bun test` runs all tests (written for `node:test`, upstream mocked); `bun run check` also typechecks them.
@@ -17,11 +17,11 @@ Every feature, the standard it follows, where it lives and which test covers it.
 | Negative answers carry a SOA, minimum TTL | RFC 2308 | `response.ts` | `dns.test.ts`, `resolve.test.ts` |
 | Padding of responses to 468 bytes | RFC 7830, 8467 | `response.ts` | `dns.test.ts`, `resolve.test.ts` |
 | Extended DNS Errors (15 blocked, 3 stale answer, 19 stale NXDOMAIN, 23 upstream unreachable) | RFC 8914 | `response.ts`, `resolve.ts` | `dns.test.ts`, `blocking.test.ts`, `resolve.test.ts` |
-| Client subnet: /24 and /48, client-chosen subnet, source prefix 0 = not located, per-subnet cache, no ECS in responses to queries without one, a query refused with a subnet is asked again without | RFC 7871 | `ecs.ts`, `resolve.ts`, `upstream.ts` | `ecs.test.ts`, `resolve.test.ts` |
+| Client subnet: /24 and /48 from `CF-Connecting-IP`, client-chosen subnet, source prefix 0 = not located (also sent when there is no subnet, so the upstream makes none up), per-subnet cache, no ECS in responses to queries without one; with a subnet, queries with and without ECS run in parallel and the ECS answer wins unless REFUSED | RFC 7871 | `ecs.ts`, `resolve.ts`, `upstream.ts`, `query.ts` | `ecs.test.ts`, `resolve.test.ts`, `handlers.test.ts` |
 | Cache: TTL countdown (answer, authority, additional), LRU, Cache API, early refresh | RFC 1035, 2181 | `cache.ts` | `cache.test.ts`, `resolve.test.ts` |
 | Serve-stale with TTL 30 and EDE 3 | RFC 8767 (deliberate deviation: served at once, not after a failed refresh) | `cache.ts`, `resolve.ts` | `cache.test.ts`, `resolve.test.ts` |
 | Minimum cache TTL 60 s | none (deliberate deviation) | `cache.ts` | `cache.test.ts` |
-| Request coalescing, hedged upstream queries | none | `resolve.ts` | `resolve.test.ts` |
+| Request coalescing, hedged upstream queries (every one, with or without ECS) | none | `upstream.ts`, `resolve.ts` | `upstream.test.ts`, `resolve.test.ts` |
 | `localhost` answers | RFC 6761 | `resolve.ts` | `resolve.test.ts` |
 | Undelegated names, private reverse zones, `.alt` | RFC 6761, 6303, 8375, 9476 | `undelegated.ts` | `undelegated.test.ts`, `resolve.test.ts` |
 | ANY gets HINFO | RFC 8482 | `resolve.ts` | `resolve.test.ts` |
@@ -33,6 +33,9 @@ Every feature, the standard it follows, where it lives and which test covers it.
 | DNS Cookies, only with the `COOKIE_SECRET` setting; never enforced (HTTPS already stops spoofing); wrong length is FORMERR | RFC 7873 | `cookie.ts`, `query.ts` | `cookie.test.ts`, `dns.test.ts`, `resolve.test.ts` |
 | Best-effort ECH key for Cloudflare names (skipped with DO) | RFC 9460 (ECH draft) | `ech.ts`, `cloudflare-ips.ts` | `resolve.test.ts` |
 | Redirects: a name answered with another name's A/AAAA (`medium.com` -> `voz.vn`), HTTPS/SVCB NODATA | none | `config.ts`, `upstream.ts`, `local.ts` | `resolve.test.ts` |
+| Routing: `/dns-query`, `/resolve`, `/apple`, `/cloudflare-ips.json`, 404 otherwise | none | `handlers.ts` | `handlers.test.ts` |
+| Apple DNS profile page: measures Cloudflare addresses in the browser, plain profile or one with `ServerAddresses` | Apple `com.apple.dnsSettings.managed` | `profile.ts` | `handlers.test.ts` |
+| Ranges offered by that page: the published Cloudflare ranges that answer for the domain, found by the build | none | `scripts/cloudflare-probe.ts`, `scripts/build-blocklist.ts`, `cloudflare-ips.ts` | `cloudflare-probe.test.ts`, `handlers.test.ts` |
 | Blocklist (Ribbon filter in shards, subdomains covered) | none | `blockset.ts`, `blocklist.ts` | `blockset.test.ts`, `blocking.test.ts` |
 | Blocklist build: list parsing, dedupe, regex drop | hosts / adblock syntax | `scripts/blocklist-lib.ts` | `blockset.test.ts` |
 | Regex block/allow rules (allow wins), safety checks | none | `regexlist.ts` | `rules.test.ts`, `blocking.test.ts` |
@@ -42,5 +45,5 @@ Every feature, the standard it follows, where it lives and which test covers it.
 
 ## Known gaps
 
-- Not covered by unit tests: `functions/*.ts` adapters, `Server-Timing`, retry of a failed blocklist load.
+- Not covered by unit tests: the browser side of `/apple` beyond parsing and the plain button (probing and ranking run only in a real browser), and the probe's network calls (`scripts/cloudflare-probe.ts` is tested for its sampling only).
 - A DNSSEC-validating client sees a blocked name's NXDOMAIN as unsigned (inherent to filtering).

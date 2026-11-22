@@ -3,10 +3,11 @@
 - `/dns-query` — RFC 8484 DoH (GET `?dns=`, POST `application/dns-message`). Status codes follow Google Public DNS.
 - `/resolve` — Google-style JSON API (GET): `name`, `type`, `do`, `cd`, `ct`, `edns_client_subnet`.
   (`/dns-query?name=...` also returns JSON.)
+- `/apple` — a page that makes an Apple DNS profile (see below); `/cloudflare-ips.json` — the Cloudflare ranges it measures.
 
 Config: the only secret is the optional `COOKIE_SECRET` (see DNS Cookies below). The upstream DoH URL (`UPSTREAM`, optional `UPSTREAM_BACKUP`) and the other knobs are in `src/config.ts`.
 
-`src/worker.ts` hands each request to `route()` in `src/handlers.ts`, which sends `/dns-query` and `/resolve` to their handlers and returns HTTP 404 for other paths. `bun run build-lists` writes the lists to `build/` for bundling into the Worker.
+`src/worker.ts` hands each request to `route()` in `src/handlers.ts`, which sends `/dns-query` and `/resolve` to their handlers, `/apple` and `/cloudflare-ips.json` to `src/profile.ts`, and returns HTTP 404 for other paths. `bun run build-lists` writes the lists to `build/` for bundling into the Worker.
 
 Dev (with [Bun](https://bun.sh)): `bun install`, `bun run check` (tsc), `bun test`, `bun run format` (Prettier, Google/gts style).
 
@@ -20,7 +21,7 @@ then set `dns_ddr_version 1` and `networkmonitor_async_privdns_resolution 1` via
 
 ## Extras
 
-- Honours a client-supplied ECS (dnsproxy / AdGuard Home `edns-addr`). Source prefix 0, such as Firefox's `::/0`, is sent as supplied (RFC 7871 7.1.2). When the resolver sends ECS, it sends one query with ECS and one without in parallel. The fallback is used if the ECS query returns REFUSED (RFC 7871 7.1.3).
+- Honours a client-supplied ECS (dnsproxy / AdGuard Home `edns-addr`). Source prefix 0, such as Firefox's `::/0`, is sent as supplied (RFC 7871 7.1.2). Otherwise the subnet is the client's address from `CF-Connecting-IP` (/24, /48). A query with no subnet is still sent with ECS source prefix 0, because Google would otherwise make one up from the Worker's own Cloudflare address. When the query has a subnet, one query with ECS and one without are sent in parallel; the ECS answer is used unless it is REFUSED (RFC 7871 7.1.3; Akamai refuses ECS from Google). The one that loses is not cancelled.
 - `ANY` queries get a minimal HINFO locally (`BLOCK_ANY`); `REDIRECTS` in `src/config.ts` answers a name with another name's A/AAAA records (now `medium.com` -> `voz.vn`); not for a query with DO, since what is made here carries no signature.
 - `/resolve?name=8.8.8.8&type=PTR` converts an IP to its reverse name.
 - The DO and CD bits of a query are passed to the upstream (DNSSEC records and `AD` come back as asked; a query with AD but no DO also gets `AD`). Answers made
@@ -95,7 +96,7 @@ Blocked names get NXDOMAIN. The lists are part of the Worker bundle, so nothing 
 
 - Serve-stale: an expired answer (up to 6 h past its TTL) is returned at once with TTL 30 and renewed in the background.
 - The Cache API lookup and the upstream call run in parallel; the first answer wins and the upstream call always renews the cache.
-- For regular queries sent without ECS, hedging waits three times the recent average upstream latency, bounded to 20–80 ms. If the query is still pending,
+- Every upstream query (the ECS one and the one without) is hedged: it waits three times the recent average upstream latency, bounded to 20–80 ms. If the query is still pending,
   it sends a second request to `UPSTREAM_BACKUP` if set, or to `UPSTREAM` again, usually on the same connection.
   The first answer wins.
 - `Server-Timing` on `/resolve` and `/dns-query` reports how long it took to prepare the DNS answer (`first`), including any DNS64 or DDR lookups needed for it.
