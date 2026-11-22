@@ -64,21 +64,11 @@ export const BLOCK_ANY = true;
 export const ECH_FRONT_DOMAIN = 'cloudflare-ech.com';
 
 /**
- * Cloudflare IPv4 ranges that were seen to answer for this domain when
- * connected to by address (checked 2026-11-22 with `curl --resolve`): the
- * profile page (profile.ts) offers addresses from these. Others, such as
- * 108.162.192.0/18, answered 403 or nothing. Only ranges that Cloudflare still
- * publishes are offered.
+ * Build time: the domain asked for at addresses in Cloudflare's published
+ * ranges. The ranges that answer 200 are the ones the profile page offers
+ * (see scripts/cloudflare-probe.ts).
  */
-export const PINNABLE_RANGES = [
-  '103.21.244.0/22',
-  '103.31.4.0/22',
-  '104.16.0.0/13',
-  '104.24.0.0/14',
-  '162.158.0.0/15',
-  '172.64.0.0/13',
-  '188.114.96.0/20',
-];
+export const PROBE_HOST = 'dns.phuchien.me';
 
 export const BLOCKLIST = {
   lists: [

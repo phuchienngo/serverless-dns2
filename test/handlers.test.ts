@@ -507,11 +507,14 @@ describe('the DNS profile page', () => {
     assert.ok(!profile.includes('ServerAddresses'));
   });
 
-  test('/cloudflare-ips.json lists the published ranges that can be pinned', async () => {
-    loadCloudflareRanges([
-      '104.16.0.0/13', // Pinnable.
-      '108.162.192.0/18', // Published, but it did not answer for this domain.
-    ]);
+  test('/cloudflare-ips.json lists the ranges that answered for this domain', async () => {
+    loadCloudflareRanges(
+      [
+        '104.16.0.0/13',
+        '108.162.192.0/18', // Published, but it did not answer for this domain.
+      ],
+      ['104.16.0.0/13']
+    );
     try {
       const body = await (await via('/cloudflare-ips.json')).json();
       assert.deepEqual(body, {v4: ['104.16.0.0/13']});

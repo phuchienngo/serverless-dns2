@@ -12,7 +12,7 @@ Dev (with [Bun](https://bun.sh)): `bun install`, `bun run check` (tsc), `bun tes
 
 Deploy: push to `main` (GitHub Actions builds the lists and runs `wrangler deploy`), or `bun run deploy` from your machine.
 
-Apple DNS profile: open `https://<host>/apple` in a browser, press Measure, and the page tries addresses of Cloudflare's network from where you are, ticks the ones that answer fastest with the fewest lost packets, and makes a `.mobileconfig` that connects to them (`ServerAddresses`). Which addresses are offered is `PINNABLE_RANGES` in `src/config.ts`. Installing the profile is still done by hand in System Settings. Connecting to a Cloudflare address other than the zone's own is not a documented feature, so it may stop working.
+Apple DNS profile: open `https://<host>/apple` in a browser, press Measure, and the page tries addresses of Cloudflare's network from where you are, ticks the ones that answer fastest with the fewest lost packets, and makes a `.mobileconfig` that connects to them (`ServerAddresses`). Which addresses are offered is decided by `bun run build-lists`, which asks for the domain (`PROBE_HOST` in `src/config.ts`) at addresses spread over each range Cloudflare publishes, and keeps the ranges that answer 200. Installing the profile is still done by hand in System Settings. Connecting to a Cloudflare address other than the zone's own is not a documented feature, so it may stop working.
 
 DDR (Android 16+ Private DNS): add in your zone
 `_dns.dns.example.com  SVCB  1 dns.example.com. alpn="h2,h3" dohpath="/dns-query{?dns}"`
@@ -60,7 +60,7 @@ from data this gateway does not validate.
 ## Blocklist
 
 1. Put your sources in `BLOCKLIST.lists` in `src/config.ts`, with any `allow` and `block` rules.
-2. `bun run build-lists` downloads them, keeps plain domains only and writes `build/blocklist.bin` (with `rules.json` and `cloudflare-ips.json` beside it)
+2. `bun run build-lists` downloads them, keeps plain domains only and writes `build/blocklist.bin` (with `rules.json` and `cloudflare-ips.json`, the published ranges and the ones that answer for the domain, beside it)
    (a Ribbon filter: each domain's hash selects some of 64 consecutive slots of `BLOCKLIST_PRECISION_BITS` bits, and
    the build solves for slot values that XOR to the domain's fingerprint; about 20.02 bits per domain at 20 bits, where
    20 is the least possible; blocking a domain blocks its subdomains). The domains are split into shards of about

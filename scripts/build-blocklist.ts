@@ -7,10 +7,12 @@ import {mkdir, readFile, writeFile} from 'node:fs/promises';
 import {dirname, join} from 'node:path';
 import {buildBlockset, dropMatched, parseDomain} from './blocklist-lib.js';
 import {parseCidrs} from '../src/ipv4.js';
+import {pinnableRanges} from './cloudflare-probe.js';
 import {
   BLOCKLIST,
   BLOCKLIST_PRECISION_BITS,
   CLOUDFLARE_IPS_URL,
+  PROBE_HOST,
 } from '../src/config.js';
 import {
   checkPattern,
@@ -96,7 +98,13 @@ async function main() {
     .map(line => line.trim())
     .filter(Boolean);
   parseCidrs(cloudflare);
-  console.log(`${cloudflare.length} Cloudflare IPv4 ranges`);
+  const pinnable = await pinnableRanges(cloudflare, PROBE_HOST);
+  console.log(
+    `${cloudflare.length} Cloudflare IPv4 ranges, ${pinnable.length} answer for ${PROBE_HOST}: ${pinnable.join(' ')}`
+  );
+  if (!pinnable.length) {
+    throw new Error(`no Cloudflare range answered for ${PROBE_HOST}`);
+  }
 
   const blockset = buildBlockset(domains, BLOCKLIST_PRECISION_BITS);
   // Written last, so a failed source leaves the previous files untouched.
@@ -107,7 +115,7 @@ async function main() {
   );
   await writeFile(
     join(dirname(outPath), 'cloudflare-ips.json'),
-    JSON.stringify({v4: cloudflare})
+    JSON.stringify({v4: cloudflare, pinnable})
   );
   await writeFile(outPath, blockset);
   console.log(`${blockset.byteLength} bytes -> ${outPath}`);

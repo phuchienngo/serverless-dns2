@@ -6,8 +6,7 @@
  * the visitor's path, so the browser does.
  */
 
-import {PINNABLE_RANGES} from './config.js';
-import {getCloudflareRanges} from './cloudflare-ips.js';
+import {getPinnableRanges} from './cloudflare-ips.js';
 
 /** The page's script. No backticks or template placeholders: it sits in a template. */
 export const PAGE_SCRIPT = `
@@ -245,14 +244,11 @@ export function profileResponse(): Response {
 }
 
 /**
- * The ranges the page may pick addresses from: those Cloudflare publishes (the
- * bundled list) that are in PINNABLE_RANGES.
+ * The ranges the page may pick addresses from: those that answered for this
+ * domain when the build tried them.
  */
 export function rangesResponse(): Response {
-  const published = getCloudflareRanges().map(
-    ([address, prefix]) => `${address.join('.')}/${prefix}`
-  );
-  const v4 = published.filter(cidr => PINNABLE_RANGES.includes(cidr));
+  const v4 = getPinnableRanges();
   return new Response(JSON.stringify({v4}), {
     headers: {
       'content-type': 'application/json',
