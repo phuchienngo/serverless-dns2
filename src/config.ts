@@ -68,6 +68,7 @@ export const BLOCKLIST = {
     'https://raw.githubusercontent.com/mullvad/dns-blocklists/refs/heads/main/output/doh/doh_adblock.txt',
     'https://raw.githubusercontent.com/mullvad/dns-blocklists/refs/heads/main/output/doh/doh_privacy.txt',
     'https://raw.githubusercontent.com/mullvad/dns-blocklists/refs/heads/main/output/doh/doh_malware.txt',
+    'https://raw.githubusercontent.com/mullvad/dns-blocklists/refs/heads/main/output/doh/doh_gambling.txt',
   ],
   allow: [],
   block: [
