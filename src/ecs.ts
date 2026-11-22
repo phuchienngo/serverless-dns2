@@ -52,31 +52,28 @@ function parseIp(ip: string): {family: number; bytes: number[]} | null {
 }
 
 /**
- * Builds ECS from the connecting IP, capped at /24 (IPv4) or /48 (IPv6).
- * @param maxPrefix A shorter source prefix requested by the client.
+ * Builds the EDNS client-subnet option.
+ * @param prefix Source prefix length; defaults to /24 (IPv4) or /48
+ *     (IPv6).
  * @return The option bytes, or null for an invalid input.
  */
-export function makeEcs(ip: string | null, maxPrefix = 128): number[] | null {
-  const address = ip && parseIp(ip);
+export function makeEcs(ip: string, prefix?: number): number[] | null {
+  const address = parseIp(ip);
   if (!address) {
     return null;
   }
-  if (!Number.isInteger(maxPrefix) || maxPrefix < 0 || maxPrefix > 128) {
+  const {bits, prefix: defaultPrefix} = ECS_FAMILIES[address.family];
+  prefix ??= defaultPrefix;
+  if (!Number.isInteger(prefix) || prefix < 0 || prefix > bits) {
     return null;
   }
-  return buildOption(address.family, address.bytes, maxPrefix);
+  return buildOption(address.family, address.bytes, prefix);
 }
 
 /**
- * Encodes ECS with the family's prefix cap and zeroes the remaining bits.
+ * Encodes an ECS option, zeroing the address bits beyond `prefix`.
  */
-function buildOption(
-  family: number,
-  address: number[] | Uint8Array,
-  maxPrefix?: number
-) {
-  const cap = ECS_FAMILIES[family].prefix;
-  const prefix = Math.min(maxPrefix ?? cap, cap);
+function buildOption(family: number, address: number[], prefix: number) {
   const byteCount = Math.ceil(prefix / 8);
   const bytes = address.slice(0, byteCount);
   const partialBits = prefix % 8;
@@ -90,47 +87,34 @@ function buildOption(
 /**
  * Parses the JSON API's `edns_client_subnet` parameter.
  * @param param For example `1.2.3.4/24` or `2001:db8::/48`.
- * @return The option bytes, or undefined for an invalid parameter.
+ * @return The option bytes, or null if invalid.
  */
-export function parseEcsParam(
-  param: string,
-  ip: string | null
-): number[] | undefined {
-  const [requestedIp, length, ...extra] = param.split('/');
-  const address = parseIp(requestedIp);
-  if (
-    !address ||
-    extra.length ||
-    (length !== undefined && !/^\d{1,3}$/.test(length))
-  ) {
-    return undefined;
+export function parseEcsParam(param: string): number[] | null {
+  const [ip, prefix, ...extra] = param.split('/');
+  if (extra.length || (prefix !== undefined && !/^\d{1,3}$/.test(prefix))) {
+    return null;
   }
-  const prefix = length === undefined ? undefined : Number(length);
-  if (prefix !== undefined && prefix > ECS_FAMILIES[address.family].bits) {
-    return undefined;
-  }
-  return prefix === 0
-    ? buildOption(address.family, [], 0)
-    : (makeEcs(ip, prefix) ??
-        buildOption(address.family, address.bytes, prefix));
+  return makeEcs(ip, prefix === undefined ? undefined : Number(prefix));
 }
 
 /**
- * Applies the client's prefix limit to the connecting IP, with the supplied
- * subnet as a fallback. A zero prefix or all-zero address requests no location.
+ * Reads the client's own ECS option (as sent by dnsproxy or AdGuard Home with
+ * `edns-addr`). The subnet is clamped to /24 (IPv4) or /48 (IPv6) to keep the
+ * cache effective and the client's privacy.
  * @param data The data of the option, as sent; null if the query had none.
- * @return The override to send upstream, or null to use the default.
+ * @return The option bytes; null if there is none or it is malformed (the
+ *     connecting IP is used then). An empty one (source prefix 0 or an
+ *     all-zero address: a privacy signal such as Firefox's `::/0`, "do not
+ *     locate me") gives a source-prefix-0 option, which is sent upstream as it
+ *     is so that no subnet is used (RFC 7871 7.1.2), and comes back with scope 0.
  */
-export function clientEcs(
-  data: Uint8Array | null,
-  ip: string | null
-): number[] | null {
+export function clientEcs(data: Uint8Array | null): number[] | null {
   if (!data || data.length < 4) {
     return null;
   }
   const family = (data[0] << 8) | data[1];
   const source = data[2];
-  const address = data.subarray(4);
+  const address = Array.from(data.subarray(4));
   const spec = ECS_FAMILIES[family];
   if (!spec || source > spec.bits || address.length !== Math.ceil(source / 8)) {
     return null;
@@ -138,29 +122,25 @@ export function clientEcs(
   if (source === 0 || address.every(b => b === 0)) {
     return buildOption(family, [], 0);
   }
-  return makeEcs(ip, source) ?? buildOption(family, address, source);
+  const padded = [...address, ...Array(spec.bits / 8 - address.length).fill(0)];
+  return buildOption(family, padded, Math.min(source, spec.prefix));
 }
 
 /**
- * Echoes the client's ECS fields. When translated, a subnet-specific
- * answer is scoped to the query's full prefix.
+ * Restores the client's original ECS source prefix and address if clamped.
+ * The scope is the upstream's, at most the source prefix (RFC 7871 7.2.2).
  * @return Replacement option data, or null if no change is needed.
  */
 export function clientEcsReply(
   received: Uint8Array,
   sent: Uint8Array
 ): number[] | null {
-  if (
-    sent.length < 4 ||
-    received.length < 4 ||
-    (sent.length === received.length &&
-      sent.every((byte, i) => i === 3 || byte === received[i]))
-  ) {
+  if (sent.length < 4 || received.length < 4 || sent[2] === received[2]) {
     return null;
   }
   return [
     ...sent.subarray(0, 3),
-    received[3] === 0 ? 0 : sent[2],
+    Math.min(received[3], sent[2]),
     ...sent.subarray(4),
   ];
 }

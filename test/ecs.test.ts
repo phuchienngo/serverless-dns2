@@ -37,16 +37,16 @@ describe('makeEcs', () => {
       option(1, 20, [255, 255, 240])
     );
     assert.deepEqual(makeEcs('255.255.255.255', 0), option(1, 0, []));
-    assert.deepEqual(makeEcs('1.2.3.4', 32), option(1, 24, [1, 2, 3]));
+    assert.deepEqual(makeEcs('1.2.3.4', 32), option(1, 32, [1, 2, 3, 4]));
   });
 
   test('understands every form of an IPv6 address', () => {
-    assert.deepEqual(makeEcs('::1'), option(2, 48, Array(6).fill(0)));
-    assert.deepEqual(makeEcs('::'), option(2, 48, Array(6).fill(0)));
-    assert.deepEqual(
-      makeEcs('2001:db8::1', 128),
-      option(2, 48, [0x20, 0x01, 0x0d, 0xb8, 0, 0])
-    );
+    assert.deepEqual(makeEcs('::1', 128)?.slice(-16), [
+      ...Array(15).fill(0),
+      1,
+    ]);
+    assert.deepEqual(makeEcs('::', 128)?.slice(-16), Array(16).fill(0));
+    assert.deepEqual(makeEcs('2001:db8::1', 128)?.slice(-4), [0, 0, 0, 1]);
     assert.deepEqual(
       makeEcs('2001:DB8::', 32),
       option(2, 32, [0x20, 0x01, 0x0d, 0xb8])
@@ -71,6 +71,7 @@ describe('makeEcs', () => {
     ]) {
       assert.equal(makeEcs(ip), null, ip);
     }
+    assert.equal(makeEcs('1.2.3.4', 33), null);
     assert.equal(makeEcs('::1', 129), null);
     assert.equal(makeEcs('1.2.3.4', -1), null);
     assert.equal(makeEcs('1.2.3.4', 1.5), null);
@@ -78,15 +79,10 @@ describe('makeEcs', () => {
 });
 
 describe('parseEcsParam (the JSON API parameter)', () => {
-  test('uses the connecting IP with or without a requested prefix', () => {
-    assert.deepEqual(
-      parseEcsParam('1.2.3.4/20', '203.0.113.77'),
-      option(1, 20, [203, 0, 112])
-    );
-    assert.deepEqual(
-      parseEcsParam('1.2.3.4', '2001:db8:1:2::9'),
-      option(2, 48, [0x20, 1, 0xd, 0xb8, 0, 1])
-    );
+  test('reads an address with or without a prefix', () => {
+    assert.deepEqual(parseEcsParam('1.2.3.4/24'), option(1, 24, [1, 2, 3]));
+    assert.deepEqual(parseEcsParam('1.2.3.4'), makeEcs('1.2.3.4'));
+    assert.deepEqual(parseEcsParam('2001:db8::/48'), makeEcs('2001:db8::', 48));
   });
 
   test('rejects garbage', () => {
@@ -95,47 +91,39 @@ describe('parseEcsParam (the JSON API parameter)', () => {
       '1.2.3.4/24/1',
       '1.2.3.4/',
       'x/24',
-      '1.2.3.4/33',
       '1.2.3.4/999',
     ]) {
-      assert.equal(parseEcsParam(p, '203.0.113.77'), undefined, p);
+      assert.equal(parseEcsParam(p), null, p);
     }
   });
 });
 
 describe('clientEcs (an ECS option sent by the client)', () => {
-  const read = (opts: Parameters<typeof makeQuery>[2], ip = '203.0.113.77') => {
-    return clientEcs(parseQuestion(makeQuery('a.test', T.A, opts)).ecs, ip);
+  const read = (opts: Parameters<typeof makeQuery>[2]) => {
+    return clientEcs(parseQuestion(makeQuery('a.test', T.A, opts)).ecs);
   };
 
-  test('honours the prefix limit for the connecting IP', () => {
+  test('honours the client subnet', () => {
     assert.deepEqual(
       read({ecs: {family: 1, prefix: 24, address: [198, 51, 100]}}),
-      option(1, 24, [203, 0, 113])
+      option(1, 24, [198, 51, 100])
     );
     assert.deepEqual(
       read({ecs: {family: 1, prefix: 16, address: [198, 51]}}),
-      option(1, 16, [203, 0])
+      option(1, 16, [198, 51])
     );
   });
 
   test('clamps a more specific subnet to /24 (IPv4) and /48 (IPv6)', () => {
     assert.deepEqual(
       read({ecs: {family: 1, prefix: 32, address: [198, 51, 100, 9]}}),
-      option(1, 24, [203, 0, 113])
+      option(1, 24, [198, 51, 100])
     );
     assert.deepEqual(
-      read(
-        {
-          ecs: {
-            family: 2,
-            prefix: 64,
-            address: [0x20, 1, 0xd, 0xb8, 0, 1, 0, 2],
-          },
-        },
-        '2001:db8:2::9'
-      ),
-      option(2, 48, [0x20, 1, 0xd, 0xb8, 0, 2])
+      read({
+        ecs: {family: 2, prefix: 64, address: [0x20, 1, 0xd, 0xb8, 0, 1, 0, 2]},
+      }),
+      option(2, 48, [0x20, 1, 0xd, 0xb8, 0, 1])
     );
   });
 
@@ -174,12 +162,12 @@ describe('clientEcs (an ECS option sent by the client)', () => {
       })
     );
     wire[wire.length - 5] = 32; // source prefix 32, but only three bytes follow
-    assert.equal(clientEcs(parseQuestion(wire).ecs, '203.0.113.77'), null);
+    assert.equal(clientEcs(parseQuestion(wire).ecs), null);
   });
 
   test('has nothing to read without an option', () => {
-    assert.equal(clientEcs(null, '203.0.113.77'), null);
-    assert.equal(clientEcs(new Uint8Array([0, 1]), '203.0.113.77'), null);
+    assert.equal(clientEcs(null), null);
+    assert.equal(clientEcs(new Uint8Array([0, 1])), null);
   });
 });
 
