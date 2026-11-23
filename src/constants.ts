@@ -101,6 +101,7 @@ export const TYPE_OPT = RECORD_TYPES.OPT;
 export const TYPE_SVCB = RECORD_TYPES.SVCB;
 export const TYPE_HTTPS = RECORD_TYPES.HTTPS;
 export const TYPE_ANY = RECORD_TYPES.ANY;
+export const TYPE_DS = RECORD_TYPES.DS;
 export const TYPE_RESINFO = RECORD_TYPES.RESINFO;
 
 /** Query types that no recursive resolver answers (RFC 6895, 6891, 8945). */

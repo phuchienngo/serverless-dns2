@@ -232,13 +232,9 @@ describe('withDns64 (RFC 6147)', () => {
       body: new Uint8Array(result.body.subarray(0, 14)),
       ttl: 30,
     };
-    const out = await synthesize(
-      q(),
-      broken,
-      async () => {
-        throw new Error('down');
-      }
-    );
+    const out = await synthesize(q(), broken, async () => {
+      throw new Error('down');
+    });
     assert.equal(out, broken);
   });
 });
@@ -387,5 +383,99 @@ describe('withDns64 PTR (RFC 6147 5.3.1)', () => {
     );
     assert.equal(out, real);
     assert.equal(asked, 0);
+  });
+});
+
+describe('what counts as an empty AAAA answer (RFC 6147 5.1.2-5.1.4)', () => {
+  const synthesizedFrom = (a: Result, result: Result) =>
+    run(q(), result, a).then(({out}) => parseMsg(out.body));
+
+  for (const [description, rcode] of [
+    ['SERVFAIL', 2],
+    ['REFUSED', 5],
+    ['NOTIMP', 4],
+    ['FORMERR', 1],
+  ] as const) {
+    test(`${description} is treated as an empty answer`, async () => {
+      const msg = await synthesizedFrom(
+        answerA(['8.8.8.8']),
+        empty(600, rcode)
+      );
+      assert.equal(msg.rcode, 0);
+      assert.equal(msg.answer.length, 1);
+      assert.equal(msg.answer[0].type, T.AAAA);
+    });
+  }
+
+  test('an upstream that fails on AAAA is an empty answer, with TTL at most 600', async () => {
+    const out = await withDns64(
+      q(),
+      `https://dns.test/__cache/${nextKey++}/dns64`,
+      Promise.reject(new Error('upstream down')),
+      async () => answerA(['8.8.8.8'], 900)
+    );
+    const msg = parseMsg(out.body);
+    assert.equal(msg.rcode, 0);
+    assert.equal(msg.answer[0].type, T.AAAA);
+    assert.equal(msg.answer[0].ttl, 600);
+  });
+
+  test('a failure stands if no A record makes an answer', async () => {
+    const failure = new Error('upstream down');
+    await assert.rejects(
+      withDns64(
+        q(),
+        `https://dns.test/__cache/${nextKey++}/dns64`,
+        Promise.reject(failure),
+        async () => {
+          throw new Error('still down');
+        }
+      ),
+      error => error === failure
+    );
+  });
+
+  test('NXDOMAIN is still returned as it is', async () => {
+    const result = empty(600, 3);
+    const {out} = await run(q(), result, answerA(['8.8.8.8']));
+    assert.equal(out, result);
+  });
+
+  const mapped = (address: string): Result => ({
+    body: makeResponse({
+      qname: 'a.test',
+      qtype: T.AAAA,
+      answer: [{type: T.AAAA, ttl: 60, rdata: ip6(address)}],
+    }),
+    ttl: 60,
+  });
+
+  test('only AAAA records in ::ffff:0:0/96 are an empty answer, and are not returned', async () => {
+    const msg = await synthesizedFrom(
+      answerA(['8.8.8.8']),
+      mapped('::ffff:c000:201')
+    );
+    assert.equal(msg.answer.length, 1);
+    assert.equal(msg.answer[0].type, T.AAAA);
+    assert.deepEqual(
+      [...msg.answer[0].rdata],
+      [0x00, 0x64, 0xff, 0x9b, 0, 0, 0, 0, 0, 0, 0, 0, 8, 8, 8, 8]
+    );
+  });
+
+  test('a usable AAAA record next to them keeps the answer as it is', async () => {
+    const result: Result = {
+      body: makeResponse({
+        qname: 'a.test',
+        qtype: T.AAAA,
+        answer: [
+          {type: T.AAAA, ttl: 60, rdata: ip6('::ffff:c000:201')},
+          {type: T.AAAA, ttl: 60, rdata: ip6('2001:db8::1')},
+        ],
+      }),
+      ttl: 60,
+    };
+    const {out} = await run(q(), result, answerA(['8.8.8.8']));
+    assert.equal(out, result);
   });
 });

@@ -44,6 +44,14 @@ describe('localAnswer', () => {
     assert.equal(m.additional.filter(r => r.type !== 41).length, 0);
   });
 
+  test('RESINFO is an authoritative answer: a client discards one without AA (RFC 9606 3)', () => {
+    const answer = localAnswer(
+      q('dns.example.com', T.RESINFO),
+      'dns.example.com'
+    )!;
+    assert.equal(parseMsg(answer.body).aa, true);
+  });
+
   test('RESINFO for this host is answered locally (RFC 9606), for no other name', () => {
     const answer = localAnswer(
       q('dns.example.com', T.RESINFO),

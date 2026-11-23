@@ -25,11 +25,12 @@ import {
   TYPE_A,
   TYPE_AAAA,
   TYPE_ANY,
+  TYPE_DS,
   TYPE_HINFO,
   TYPE_RESINFO,
   TYPE_SVCB,
 } from './constants.js';
-import {utf8} from './wire.js';
+import {FLAG_AA, utf8} from './wire.js';
 import {redirectedHints} from './redirects.js';
 import {makeRecord, respond, respondNegative} from './response.js';
 import {alpnValue, svcbRdata} from './svcb.js';
@@ -63,7 +64,9 @@ function resinfo(q: Question): Result {
     exterr.length,
     ...exterr,
   ]);
-  return {body: respond(q, RCODE_NOERROR, [record]), ttl: TTL_DISCOVERY};
+  const body = respond(q, RCODE_NOERROR, [record]);
+  body[2] |= FLAG_AA; // A client discards a RESINFO answer without it (RFC 9606 3).
+  return {body, ttl: TTL_DISCOVERY};
 }
 
 /** @return Whether this is the DDR query for this gateway (RFC 9462). */
@@ -71,6 +74,18 @@ export function isDdr(q: Question, host: string): boolean {
   return (
     q.type === TYPE_SVCB &&
     (q.name === '_dns.resolver.arpa' || q.name === `_dns.${host}`)
+  );
+}
+
+/**
+ * RFC 8375 4 B: a DS query with DO for `home.arpa` or below is the one query
+ * about it that is forwarded, so that the answer proves the record's absence.
+ */
+function provesNoDelegation(q: Question): boolean {
+  return (
+    q.type === TYPE_DS &&
+    q.dnssecOk &&
+    (q.name === 'home.arpa' || q.name.endsWith('.home.arpa'))
   );
 }
 
@@ -147,7 +162,7 @@ export function localAnswer(q: Question, host: string): Result | null {
   if (q.name === 'localhost' || q.name.endsWith('.localhost')) {
     return localhost(q);
   }
-  if (BLOCK_UNDELEGATED && isUndelegated(q.name)) {
+  if (BLOCK_UNDELEGATED && isUndelegated(q.name) && !provesNoDelegation(q)) {
     return {
       body: respondNegative(q, RCODE_NXDOMAIN, TTL_LOCAL),
       ttl: TTL_LOCAL,
@@ -161,8 +176,9 @@ export function localAnswer(q: Question, host: string): Result | null {
  * @return Null if the question is forwarded.
  */
 export function typeAnswer(q: Question): Result | null {
-  if (BLOCK_ANY && q.type === TYPE_ANY) {
-    // RFC 8482: a minimal HINFO answer.
+  if (BLOCK_ANY && q.type === TYPE_ANY && !q.dnssecOk) {
+    // RFC 8482 4.2: a minimal HINFO answer. With DO it would need an RRSIG for
+    // a signed zone (MUST), which only the upstream can give: it is forwarded.
     const text = utf8('RFC8482');
     const hinfo = makeRecord(TYPE_HINFO, TTL_LOCAL, [text.length, ...text, 0]);
     return {body: respond(q, RCODE_NOERROR, [hinfo]), ttl: TTL_LOCAL};

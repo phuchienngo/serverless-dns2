@@ -6,8 +6,12 @@
 import {lookupFreshLocal, store} from './cache.js';
 import {DNS64_PREFIX} from './config.js';
 import {
+  RCODE_FORMERR,
   RCODE_NOERROR,
+  RCODE_NOTIMP,
   RCODE_NXDOMAIN,
+  RCODE_REFUSED,
+  RCODE_SERVFAIL,
   TTL_LOCAL,
   TYPE_A,
   TYPE_AAAA,
@@ -16,7 +20,13 @@ import {
 } from './constants.js';
 import {makeQuestion} from './query.js';
 import {makeRecord, respond} from './response.js';
-import {encodeName, parseAnswers, readName, rcodeOf} from './wire.js';
+import {
+  encodeName,
+  parseAnswers,
+  readName,
+  rcodeOf,
+  type DnsRecord,
+} from './wire.js';
 import {inBlocks, type Ipv4Block} from './ipv4.js';
 import type {Question, Result} from './types.js';
 
@@ -43,6 +53,17 @@ const NOT_GLOBAL: Ipv4Block[] = [
 ];
 
 const isGlobal = (address: number[]) => !inBlocks(address, NOT_GLOBAL);
+
+/** The start of ::ffff:0:0/96, whose AAAA records IPv6-only hosts cannot use. */
+const MAPPED_PREFIX = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff];
+
+/** @return Whether a record is a usable AAAA one (RFC 6147 5.1.4). */
+function isUsableAaaa(body: Uint8Array, r: DnsRecord): boolean {
+  return (
+    r.type === TYPE_AAAA &&
+    !(r.length === 16 && MAPPED_PREFIX.every((b, i) => body[r.data + i] === b))
+  );
+}
 
 /** The A records `ipv4only.arpa` has (RFC 7050): never global addresses. */
 const IPV4ONLY = 'ipv4only.arpa';
@@ -176,7 +197,17 @@ interface Synthesizer {
 }
 
 const SYNTHESIZERS: Record<number, Synthesizer> = {
-  [TYPE_AAAA]: {rcodes: [RCODE_NOERROR], make: synthesizeAaaa},
+  // Any rcode but NXDOMAIN counts as an empty answer (RFC 6147 5.1.2).
+  [TYPE_AAAA]: {
+    rcodes: [
+      RCODE_NOERROR,
+      RCODE_FORMERR,
+      RCODE_SERVFAIL,
+      RCODE_NOTIMP,
+      RCODE_REFUSED,
+    ],
+    make: synthesizeAaaa,
+  },
   [TYPE_PTR]: {rcodes: [RCODE_NOERROR, RCODE_NXDOMAIN], make: synthesizePtr},
 };
 
@@ -187,7 +218,10 @@ const SYNTHESIZERS: Record<number, Synthesizer> = {
  * TTL is the smaller of the A record's and the AAAA answer's (5.1.7). What is
  * made is kept in memory under `key`, so the lookup is not repeated.
  * Starts the A lookup while AAAA is pending (5.1.8). DO without CD skips
- * synthesis because a validating client would reject it (5.5).
+ * synthesis because a validating client would reject it (5.5). An AAAA
+ * question that fails, or gets an error other than NXDOMAIN, or only AAAA
+ * records in ::ffff:0:0/96, is treated as an empty answer (5.1.2-5.1.4); if no
+ * A record makes an answer either, the failure stands.
  * DNS64 is a courtesy: if making an answer fails, the upstream's stands.
  * @param lookup Resolves the additional question used to synthesize an answer.
  */
@@ -206,12 +240,28 @@ export async function withDns64(
   const address = aaaa && !cached ? lookup(addressQuestion(q)) : undefined;
   void address?.catch(() => {});
 
-  const result = await answer;
+  // A failed AAAA lookup is an empty answer with a 600 s TTL (5.1.3, 5.1.7).
+  let failure: unknown;
+  const result = await answer.catch(error => {
+    if (!aaaa) {
+      throw error;
+    }
+    failure = error;
+    return {body: respond(q, RCODE_SERVFAIL, []), ttl: 600} as Result;
+  });
+  const unchanged = () => {
+    if (failure) {
+      throw failure;
+    }
+    return result;
+  };
   try {
     if (
       result.blocked ||
       !synthesizer.rcodes.includes(rcodeOf(result.body)) ||
-      parseAnswers(result.body).some(r => r.type === q.type)
+      parseAnswers(result.body).some(r =>
+        aaaa ? isUsableAaaa(result.body, r) : r.type === q.type
+      )
     ) {
       return result;
     }
@@ -225,11 +275,11 @@ export async function withDns64(
       address ? () => address : lookup
     );
     if (!made) {
-      return result;
+      return unchanged();
     }
     store(undefined, key, made);
     return made;
   } catch {
-    return result;
+    return unchanged();
   }
 }

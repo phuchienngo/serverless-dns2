@@ -10,8 +10,9 @@ const encoder = new TextEncoder();
 /** Header flag bits: RD is in byte 2 of a message, CD in byte 3. */
 export const FLAG_RD = 0x01;
 export const FLAG_CD = 0x10;
-/** The TC (truncated) flag, in byte 2. */
+/** The TC (truncated) flag and the AA (authoritative answer) flag, in byte 2. */
 export const FLAG_TC = 0x02;
+export const FLAG_AA = 0x04;
 /** QR in byte 2 and RA in byte 3 have the same bit. */
 export const FLAG_QR_OR_RA = 0x80;
 /** The response code, the low bits of byte 3 (the rest is in the OPT record). */

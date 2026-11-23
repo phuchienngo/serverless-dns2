@@ -157,7 +157,13 @@ async function shape(
     remove: chosen ? undefined : OPTION_ECS,
     replace:
       chosen && ecs
-        ? {code: OPTION_ECS, withData: data => clientEcsReply(data, ecs)}
+        ? {
+            code: OPTION_ECS,
+            withData: data => clientEcsReply(data, ecs),
+            // No subnet in the reply means scope 0 (RFC 7871 7.3), and a
+            // client that sent one gets one back (7.2.2).
+            whenMissing: [...ecs.subarray(0, 3), 0, ...ecs.subarray(4)],
+          }
         : undefined,
     add: added,
     pad: q.padding,

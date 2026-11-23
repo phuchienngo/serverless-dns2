@@ -23,6 +23,7 @@ const ID = 0x1234;
 const RCODE = {
   NOERROR: 0,
   FORMERR: 1,
+  NXDOMAIN: 3,
   NOTIMP: 4,
   REFUSED: 5,
   BADVERS: 16,
@@ -167,6 +168,38 @@ const inputs: Input[] = [
     'QTYPE ANY gets HINFO (RFC 8482)',
     n => raw(n, {type: T.ANY}),
     local(RCODE.NOERROR),
+  ],
+  [
+    'QTYPE ANY with DO is forwarded, to be signed (RFC 8482 4.2)',
+    n => raw(n, {type: T.ANY, ar: 1, tail: opt({flags: 0x8000})}),
+    {...answered, opt: true},
+  ],
+  [
+    'DS of home.arpa without DO is NXDOMAIN here',
+    n => raw(n, {name: encodeName('home.arpa'), type: 43}),
+    {http: 200, rcode: RCODE.NXDOMAIN, upstream: false},
+  ],
+  [
+    'DS of home.arpa with DO is forwarded, to prove the absence (RFC 8375 4)',
+    n =>
+      raw(n, {
+        name: encodeName('home.arpa'),
+        type: 43,
+        ar: 1,
+        tail: opt({flags: 0x8000}),
+      }),
+    {...answered, opt: true},
+  ],
+  [
+    'NS of home.arpa is NXDOMAIN here, even with DO',
+    n =>
+      raw(n, {
+        name: encodeName('home.arpa'),
+        type: 2,
+        ar: 1,
+        tail: opt({flags: 0x8000}),
+      }),
+    {http: 200, rcode: RCODE.NXDOMAIN, upstream: false, opt: true},
   ],
   ['QTYPE IXFR', n => raw(n, {type: 251}), local(RCODE.NOTIMP)],
   ['QTYPE AXFR', n => raw(n, {type: 252}), local(RCODE.NOTIMP)],

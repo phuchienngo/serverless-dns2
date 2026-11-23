@@ -12,10 +12,16 @@ import {
 } from './config.js';
 import {noSubnet} from './ecs.js';
 import {buildQuery} from './query.js';
-import {RCODE_NOERROR, RCODE_NXDOMAIN, RCODE_REFUSED} from './constants.js';
+import {
+  OPTION_ECS,
+  RCODE_NOERROR,
+  RCODE_NXDOMAIN,
+  RCODE_REFUSED,
+} from './constants.js';
 import {
   encodeName,
   FLAG_QR_OR_RA,
+  optOptions,
   HEADER_BYTES,
   questionCount,
   rcodeOf,
@@ -61,6 +67,22 @@ function answers(query: Uint8Array, reply: Uint8Array): boolean {
 }
 
 /**
+ * RFC 7871 7.3: a reply that carries a subnet other than the one sent (family,
+ * source prefix or address) must be dropped. No subnet in the reply means
+ * scope 0, and a query that sent source prefix 0 has nothing to match.
+ */
+function echoesSubnet(query: Uint8Array, reply: Uint8Array): boolean {
+  const sent = optOptions(query).find(o => o.code === OPTION_ECS)?.data;
+  const got = optOptions(reply).find(o => o.code === OPTION_ECS)?.data;
+  if (!sent || sent[2] === 0 || !got) {
+    return true;
+  }
+  return (
+    got.length === sent.length && sent.every((b, i) => i === 3 || b === got[i])
+  );
+}
+
+/**
  * Sends a query to one DoH resolver.
  */
 async function post(
@@ -86,7 +108,8 @@ async function post(
     if (
       body.length < HEADER_BYTES ||
       (body[2] & FLAG_QR_OR_RA) === 0 ||
-      !answers(wire, body)
+      !answers(wire, body) ||
+      !echoesSubnet(wire, body)
     ) {
       throw new Error('bad upstream response');
     }

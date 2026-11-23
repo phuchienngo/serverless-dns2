@@ -174,19 +174,30 @@ export function clientEcs(data: Uint8Array | null): number[] | null {
 
 /**
  * Restores the client's original ECS source prefix and address if clamped.
- * The scope is the upstream's, at most the source prefix (RFC 7871 7.2.2).
+ * The scope is the upstream's, at most the source prefix (RFC 7871 7.2.2); a
+ * reply about another subnet than the client's (the one to the query sent
+ * without a subnet may carry one) gets scope 0, which is true for any client.
  * @return Replacement option data, or null if no change is needed.
  */
 export function clientEcsReply(
   received: Uint8Array,
   sent: Uint8Array
 ): number[] | null {
-  if (sent.length < 4 || received.length < 4 || sent[2] === received[2]) {
+  if (sent.length < 4 || received.length < 4) {
+    return null;
+  }
+  // The same family, and the address received is the start of the one sent.
+  const ours =
+    received[0] === sent[0] &&
+    received[1] === sent[1] &&
+    received.length <= sent.length &&
+    received.subarray(4).every((b, i) => b === sent[4 + i]);
+  if (ours && sent[2] === received[2]) {
     return null;
   }
   return [
     ...sent.subarray(0, 3),
-    Math.min(received[3], sent[2]),
+    ours ? Math.min(received[3], sent[2]) : 0,
     ...sent.subarray(4),
   ];
 }

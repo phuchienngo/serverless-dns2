@@ -427,6 +427,80 @@ describe('with a client subnet (two upstream queries)', () => {
     assert.equal(msg.answer.length, 1);
   });
 
+  /** An upstream that answers the subnet query with this ECS option data. */
+  const echoing = (data: number[] | null): Behavior =>
+    byQuery(
+      (_, q) =>
+        new Response(
+          answer(q, {
+            opt: {
+              do: q.opt?.do,
+              options: data ? [{code: 8, data: new Uint8Array(data)}] : [],
+            },
+          })
+        ),
+      ok
+    );
+  const subnetOf = (msg: Msg) => msg.opt?.options.find(o => o.code === 8)?.data;
+  const sent = {ecs: {family: 1 as const, prefix: 24, address: [192, 0, 2, 0]}};
+
+  test('an echo of the subnet is passed on with its scope (RFC 7871 7.2.2)', async () => {
+    useUpstream(echoing([0, 1, 24, 16, 192, 0, 2]));
+    const {msg} = await ask(fresh(), sent, IP);
+    assert.equal(msg.rcode, RCODE.NOERROR);
+    assert.deepEqual([...subnetOf(msg)!], [0, 1, 24, 16, 192, 0, 2]);
+  });
+
+  test('no subnet in the reply: the client that sent one gets it back with scope 0', async () => {
+    useUpstream(echoing(null));
+    const {msg} = await ask(fresh(), sent, IP);
+    assert.equal(msg.rcode, RCODE.NOERROR);
+    assert.deepEqual([...subnetOf(msg)!], [0, 1, 24, 0, 192, 0, 2]);
+  });
+
+  test('no subnet in the reply, none sent: none comes back', async () => {
+    useUpstream(echoing(null));
+    const {msg} = await ask(fresh(), {}, IP);
+    assert.equal(subnetOf(msg), undefined);
+  });
+
+  for (const [description, data] of [
+    ['another address', [0, 1, 24, 24, 198, 51, 100]],
+    ['another source prefix', [0, 1, 16, 16, 192, 0]],
+    ['another family', [0, 2, 24, 24, 192, 0, 2]],
+  ] as const) {
+    test(`a reply with ${description} is dropped, and the one without a subnet is used (RFC 7871 7.3)`, async () => {
+      useUpstream(echoing([...data]));
+      const {msg} = await ask(fresh(), sent, IP);
+      assert.equal(msg.rcode, RCODE.NOERROR);
+      assert.deepEqual([...subnetOf(msg)!], [0, 1, 24, 0, 192, 0, 2]);
+    });
+  }
+
+  // Not the other source prefix: a shorter prefix of the client's own address
+  // is still its subnet.
+  for (const [description, data] of [
+    ['another address', [0, 1, 24, 24, 198, 51, 100]],
+    ['another family', [0, 2, 24, 24, 192, 0, 2]],
+  ] as const) {
+    test(`a reply with ${description} to the query without a subnet is not shown to the client`, async () => {
+      useUpstream(
+        (_, q) =>
+          new Response(
+            answer(q, {
+              opt: {
+                do: q.opt?.do,
+                options: [{code: 8, data: new Uint8Array(data)}],
+              },
+            })
+          )
+      );
+      const {msg} = await ask(fresh(), sent, IP);
+      assert.equal(msg.rcode, RCODE.NOERROR);
+      assert.deepEqual([...subnetOf(msg)!], [0, 1, 24, 0, 192, 0, 2]);
+    });
+  }
+
   test('both failing is SERVFAIL', async () => {
     useUpstream(httpError(500));
     const {msg} = await ask(fresh(), {}, IP);

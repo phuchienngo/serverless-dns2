@@ -204,8 +204,15 @@ function splice(
 export interface OptEdit {
   /** Remove every option with this code. */
   remove?: number;
-  /** Replace an existing option using its first value. Null keeps it as is. */
-  replace?: {code: number; withData: (data: Uint8Array) => number[] | null};
+  /**
+   * Replace an existing option using its first value (null keeps it as is);
+   * if there is none, add one with `whenMissing` if that is given.
+   */
+  replace?: {
+    code: number;
+    withData: (data: Uint8Array) => number[] | null;
+    whenMissing?: number[];
+  };
   /** Options to add, each as its code, length and data. */
   add?: number[][];
   /** Add a Padding option to make the size a multiple of 468 bytes. */
@@ -238,7 +245,7 @@ export function rewriteOpt(resp: Uint8Array, edit: OptEdit): Uint8Array {
       const current = options.find(o => o.code === replace.code);
       const data = current
         ? replace.withData(resp.subarray(current.start + 4, current.end))
-        : null;
+        : (replace.whenMissing ?? null);
       if (data !== null) {
         replaced = replace.code;
         additions = [ednsOption(replaced, data), ...add];
