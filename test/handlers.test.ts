@@ -149,6 +149,37 @@ describe('/dns-query (RFC 8484)', () => {
     assert.equal((await post(new Uint8Array([1, 2, 3]))).status, 400);
   });
 
+  test('a query cut short in its header or question is a 400 over GET and POST', async () => {
+    const full = makeQuery(fresh(), T.A);
+    for (const length of [0, 5, 12, 13, 20]) {
+      const part = full.slice(0, length);
+      assert.equal((await post(part)).status, 400, `POST ${length}`);
+      assert.equal(
+        (await get(`/dns-query?dns=${b64url(part)}`)).status,
+        400,
+        `GET ${length}`
+      );
+    }
+  });
+
+  test('Accept is ignored: a GET with Accept text/html still gets a DNS message', async () => {
+    const res = await handle(
+      new Request(`${B}/dns-query?dns=${b64url(makeQuery(fresh(), T.A))}`, {
+        headers: {accept: 'text/html'},
+      }),
+      ctx
+    );
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('content-type'), 'application/dns-message');
+  });
+
+  test('a POST with Content-Type text/html is 415', async () => {
+    assert.equal(
+      (await post(makeQuery(fresh(), T.A), 'text/html')).status,
+      415
+    );
+  });
+
   test('400 without dns, for bad base64, and 414 for a very long parameter', async () => {
     assert.equal((await get('/dns-query')).status, 400);
     assert.equal((await get('/dns-query?dns=***')).status, 400);
