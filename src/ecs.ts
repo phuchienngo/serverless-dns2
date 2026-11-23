@@ -1,5 +1,6 @@
 /** @fileoverview EDNS Client Subnet (RFC 7871) helpers. */
 
+import {ECS_ENABLED} from './config.js';
 import {
   ECS_FAMILIES,
   FAMILY_IPV4,
@@ -8,6 +9,18 @@ import {
 } from './constants.js';
 import {ednsOption} from './response.js';
 import {u16} from './wire.js';
+
+let enabled = ECS_ENABLED;
+
+/** @return Whether the client's subnet is sent to the upstream (ECS_ENABLED). */
+export function ecsEnabled(): boolean {
+  return enabled;
+}
+
+/** Overrides ECS_ENABLED (for tests). */
+export function setEcsEnabled(on: boolean): void {
+  enabled = on;
+}
 
 /**
  * Parses an IPv4 or IPv6 address. IPv4-mapped IPv6 becomes plain IPv4.

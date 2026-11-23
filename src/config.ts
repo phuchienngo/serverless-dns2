@@ -12,6 +12,15 @@ export const UPSTREAM_TIMEOUT_MS = 4000;
 export const UPSTREAM = 'https://cloudflare-dns.com/dns-query';
 export const UPSTREAM_BACKUP: string | null = null;
 
+/**
+ * Send the client's subnet to the upstream (EDNS Client Subnet, RFC 7871), so
+ * that a CDN answers with a server near the client. Turn it off for a resolver
+ * that does not pass it on (Cloudflare's 1.1.1.1 does not): the query then
+ * carries no ECS, one query is made instead of two, and the cache keeps one
+ * answer for every client.
+ */
+export const ECS_ENABLED = false;
+
 /** Answers kept in the isolate's memory, in front of the Cache API. */
 export const LOCAL_CACHE_SIZE = 5000;
 

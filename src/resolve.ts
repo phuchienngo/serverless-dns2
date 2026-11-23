@@ -30,7 +30,7 @@ import {makeQuestion} from './query.js';
 import {cookieOption} from './cookie.js';
 import {ipv4onlyAnswer, withDns64} from './dns64.js';
 import {addEch, startEchProbe} from './ech.js';
-import {clientEcsReply, makeEcs} from './ecs.js';
+import {clientEcsReply, ecsEnabled, makeEcs} from './ecs.js';
 import {ddrAnswer, isDdr, localAnswer, typeAnswer} from './local.js';
 import type {Question, ResolveOptions, Result} from './types.js';
 import {askUpstream, coalesce, queryFlags} from './upstream.js';
@@ -60,11 +60,14 @@ function dns64Key(q: Question, options: ResolveOptions): string {
  * an empty one asking not to be located) rather than leaving it to its IP.
  */
 function clientChoseEcs(options: ResolveOptions): boolean {
-  return !!options.ecs;
+  return ecsEnabled() && !!options.ecs;
 }
 
 /** The client subnet to send: the one chosen by the client, else its IP's. */
 function ecsOf(options: ResolveOptions): number[] | null {
+  if (!ecsEnabled()) {
+    return null;
+  }
   if (options.ecs !== undefined) {
     return options.ecs;
   }

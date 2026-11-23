@@ -8,6 +8,7 @@ import {UPSTREAM} from '../src/config.js';
 import {resetBlocklist} from '../src/blocklist.js';
 import {resetCache} from '../src/cache.js';
 import {resetCloudflareRanges} from '../src/cloudflare-ips.js';
+import {setEcsEnabled} from '../src/ecs.js';
 import {resetEch} from '../src/ech.js';
 import {resetUpstream} from '../src/upstream.js';
 
@@ -459,5 +460,6 @@ export function resetState(): void {
   resetUpstream();
   resetEch();
   resetCloudflareRanges();
+  setEcsEnabled(true); // The tests are of the feature; one test turns it off.
   resetBlocklist();
 }

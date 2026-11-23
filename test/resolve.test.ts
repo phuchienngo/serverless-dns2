@@ -9,6 +9,7 @@ import {ECH_FRONT_DOMAIN, HEDGE_MAX_MS} from '../src/config.js';
 import {parseQuestion} from '../src/query.js';
 import {handle} from '../src/handlers.js';
 import {loadCloudflareRanges} from '../src/cloudflare-ips.js';
+import {setEcsEnabled} from '../src/ecs.js';
 import {resolve} from '../src/resolve.js';
 import {
   T,
@@ -586,6 +587,28 @@ describe('EDNS in the answer', () => {
   test('padding applies to local answers as well', async () => {
     const {result} = await ask('localhost', T.A, {padding: 1});
     assert.equal(result.body.length % 468, 0);
+  });
+});
+
+describe('ECS turned off (ECS_ENABLED)', () => {
+  const hasEcsOption = (call: {query: Msg}) =>
+    call.query.opt?.options.some(o => o.code === 8) ?? false;
+
+  beforeEach(() => setEcsEnabled(false));
+
+  test('one upstream query with no ECS option, whatever the client sends', async () => {
+    const option = [0, 8, 0, 7, 0, 1, 24, 0, 198, 51, 100];
+    await ask(fresh(), T.A, {}, {ip: '203.0.113.77'});
+    await ask(fresh(), T.A, {}, {ip: '203.0.113.77', ecs: option});
+    assert.equal(upstream.calls.length, 2);
+    assert.deepEqual(upstream.calls.map(hasEcsOption), [false, false]);
+  });
+
+  test('one cache entry for every client', async () => {
+    const name = fresh();
+    await ask(name, T.A, {}, {ip: '203.0.113.77'});
+    await ask(name, T.A, {}, {ip: '198.51.100.9'});
+    assert.equal(upstream.calls.length, 1);
   });
 });
 

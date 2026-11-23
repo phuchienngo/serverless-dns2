@@ -21,6 +21,7 @@ then set `dns_ddr_version 1` and `networkmonitor_async_privdns_resolution 1` via
 
 ## Extras
 
+- ECS is off by default (`ECS_ENABLED` in `src/config.ts`), because the upstream is now Cloudflare's resolver, which does not pass a client subnet on: no ECS is sent or kept, so one upstream query is made and one answer is cached for every client. Turn it on for a resolver that uses it (Google's); the rest of this item is about that case.
 - Honours a client-supplied ECS (dnsproxy / AdGuard Home `edns-addr`). Source prefix 0, such as Firefox's `::/0`, is sent as supplied (RFC 7871 7.1.2). Otherwise the subnet is the client's address from `CF-Connecting-IP` (/24, /48). A query with no subnet is still sent with ECS source prefix 0, because Google would otherwise make one up from the Worker's own Cloudflare address. When the query has a subnet, one query with ECS and one without are sent in parallel; the ECS answer is used unless it is REFUSED (RFC 7871 7.1.3; Akamai refuses ECS from Google). The one that loses is not cancelled.
 - `ANY` queries get a minimal HINFO locally (`BLOCK_ANY`); `REDIRECTS` in `src/config.ts` answers a name with another name's A/AAAA records (now `medium.com` -> `voz.vn`); not for a query with DO, since what is made here carries no signature.
 - `/resolve?name=8.8.8.8&type=PTR` converts an IP to its reverse name.
