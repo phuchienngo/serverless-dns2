@@ -8,6 +8,6 @@ declare module '*/rules.json' {
   export default rules;
 }
 declare module '*/cloudflare-ips.json' {
-  const ranges: {v4?: string[]; pinnable?: string[]; v6prefix?: string | null};
+  const ranges: Partial<import('./cloudflare-ips.js').CloudflareIps>;
   export default ranges;
 }

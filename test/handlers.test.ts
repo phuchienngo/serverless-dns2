@@ -508,14 +508,14 @@ describe('the DNS profile page', () => {
   });
 
   test('/cloudflare-ips.json lists the ranges that answered for this domain', async () => {
-    loadCloudflareRanges(
-      [
+    loadCloudflareRanges({
+      v4: [
         '104.16.0.0/13',
         '108.162.192.0/18', // Published, but it did not answer for this domain.
       ],
-      ['104.16.0.0/13'],
-      '2606:4700:3031'
-    );
+      pinnable: ['104.16.0.0/13'],
+      v6prefix: '2606:4700:3031',
+    });
     try {
       const body = await (await via('/cloudflare-ips.json')).json();
       assert.deepEqual(body, {

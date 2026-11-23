@@ -6,7 +6,7 @@
  * the visitor's path, so the browser does.
  */
 
-import {getPinnableRanges, getV6Prefix} from './cloudflare-ips.js';
+import {getPinning} from './cloudflare-ips.js';
 
 /** The page's script. No backticks or template placeholders: it sits in a template. */
 export const PAGE_SCRIPT = `
@@ -18,6 +18,9 @@ export const PAGE_SCRIPT = `
   var EXTRA_PROBES = 4;
   var $ = function (id) { return document.getElementById(id); };
 
+  // An IPv6 address goes in brackets in a URL.
+  function urlHost(ip) { return ip.indexOf(':') >= 0 ? '[' + ip + ']' : ip; }
+
   // Time to a failed TLS handshake (the certificate is not for an address),
   // or null if nothing came back in time.
   function probe(ip) {
@@ -26,7 +29,7 @@ export const PAGE_SCRIPT = `
       var lost = false;
       var timer = setTimeout(function () { lost = true; controller.abort(); }, TIMEOUT);
       var started = performance.now();
-      fetch('https://' + (ip.indexOf(':') >= 0 ? '[' + ip + ']' : ip) + '/cdn-cgi/trace', {
+      fetch('https://' + urlHost(ip) + '/cdn-cgi/trace', {
         mode: 'no-cors', cache: 'no-store', signal: controller.signal
       }).then(
         function () { return performance.now() - started; },
@@ -260,8 +263,8 @@ export function profileResponse(): Response {
  * of them into an IPv6 one.
  */
 export function rangesResponse(): Response {
-  const v4 = getPinnableRanges();
-  return new Response(JSON.stringify({v4, v6prefix: getV6Prefix()}), {
+  const {pinnable, v6prefix} = getPinning();
+  return new Response(JSON.stringify({v4: pinnable, v6prefix}), {
     headers: {
       'content-type': 'application/json',
       'cache-control': 'public, max-age=3600',

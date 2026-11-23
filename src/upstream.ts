@@ -10,6 +10,7 @@ import {
   UPSTREAM_BACKUP,
   UPSTREAM_TIMEOUT_MS,
 } from './config.js';
+import {noSubnet} from './ecs.js';
 import {buildQuery} from './query.js';
 import {RCODE_REFUSED} from './constants.js';
 import {
@@ -129,11 +130,11 @@ export async function queryUpstream(
   ecs: number[] | null,
   flags?: QueryFlags
 ): Promise<UpstreamReply> {
-  const preferred = forward(buildQuery(question, ecs, flags));
+  const preferred = forward(buildQuery(question, ecs ?? noSubnet(), flags));
   if (!ecs) {
     return preferred;
   }
-  const fallback = forward(buildQuery(question, null, flags));
+  const fallback = forward(buildQuery(question, noSubnet(), flags));
   void fallback.catch(() => {}); // Only read if the ECS answer is REFUSED.
   const reply = await preferred;
   return rcodeOf(reply.body) === RCODE_REFUSED ? fallback : reply;

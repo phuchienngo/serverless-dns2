@@ -11,13 +11,7 @@ import type {Env} from './types.js';
 // The lists built by `bun run build-lists` are bundled with the Worker, so a
 // new isolate answers its first request without fetching them.
 loadBlocklist(blocklist, rules);
-const ranges: {v4?: string[]; pinnable?: string[]; v6prefix?: string | null} =
-  cloudflareIps;
-loadCloudflareRanges(
-  ranges.v4 ?? [],
-  ranges.pinnable ?? [],
-  ranges.v6prefix ?? null
-);
+loadCloudflareRanges(cloudflareIps);
 
 export default {
   fetch(

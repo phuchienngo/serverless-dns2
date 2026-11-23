@@ -1,53 +1,49 @@
 /**
- * @fileoverview Cloudflare's published IPv4 ranges, which ech.ts uses to tell
- * names served by Cloudflare. `bun run build-lists` downloads the list
- * (CLOUDFLARE_IPS_URL); worker.ts bundles it and hands it to
- * `loadCloudflareRanges` when the isolate starts. It also holds the ranges
- * that answered for this domain when the build tried them (the profile page
- * offers addresses from those).
+ * @fileoverview What the build learned about Cloudflare's network
+ * (`build/cloudflare-ips.json`, see scripts/cloudflare-probe.ts): its published
+ * IPv4 ranges, which ech.ts uses to tell names served by Cloudflare, and what
+ * the profile page (profile.ts) needs to offer addresses. worker.ts bundles the
+ * file and hands it to `loadCloudflareRanges` when the isolate starts.
  */
 
 import {parseCidrs, type Ipv4Block} from './ipv4.js';
 
+export interface CloudflareIps {
+  /** The ranges Cloudflare publishes (CLOUDFLARE_IPS_URL). */
+  v4: string[];
+  /** The ones among them that answered for this domain at build time. */
+  pinnable: string[];
+  /** The first three groups of the domain's own IPv6 addresses, if known. */
+  v6prefix: string | null;
+}
+
 let blocks: Ipv4Block[] = [];
-let pinnable: string[] = [];
-let prefix6: string | null = null;
+let pinning = {
+  pinnable: [] as readonly string[],
+  v6prefix: null as string | null,
+};
 
 /**
- * Sets the ranges.
- * @param v4 CIDR strings.
- * @param answering The ones among them that answer for this domain.
- * @param v6prefix The first three groups of the domain's own IPv6 addresses.
- * @throws If one is not a valid IPv4 range.
+ * Sets what is known.
+ * @param ips Missing parts are empty.
+ * @throws If a published range is not a valid IPv4 range.
  */
-export function loadCloudflareRanges(
-  v4: string[],
-  answering: string[] = [],
-  v6prefix: string | null = null
-): void {
-  blocks = parseCidrs(v4);
-  pinnable = answering.filter(cidr => v4.includes(cidr));
-  prefix6 = v6prefix;
+export function loadCloudflareRanges(ips: Partial<CloudflareIps>): void {
+  blocks = parseCidrs(ips.v4 ?? []);
+  pinning = {pinnable: ips.pinnable ?? [], v6prefix: ips.v6prefix ?? null};
 }
 
-/** @return The IPv6 prefix of this domain's addresses, if known. */
-export function getV6Prefix(): string | null {
-  return prefix6;
-}
-
-/** @return The ranges that answered for this domain at build time. */
-export function getPinnableRanges(): readonly string[] {
-  return pinnable;
-}
-
-/** @return Cloudflare's IPv4 ranges. */
+/** @return Cloudflare's published IPv4 ranges. */
 export function getCloudflareRanges(): readonly Ipv4Block[] {
   return blocks;
 }
 
-/** Forgets the ranges (for tests). */
+/** @return The ranges that answer for this domain, and its IPv6 prefix. */
+export function getPinning(): typeof pinning {
+  return pinning;
+}
+
+/** Forgets it all (for tests). */
 export function resetCloudflareRanges(): void {
-  blocks = [];
-  pinnable = [];
-  prefix6 = null;
+  loadCloudflareRanges({});
 }

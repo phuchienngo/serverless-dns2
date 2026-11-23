@@ -7,8 +7,7 @@ import {mkdir, readFile, writeFile} from 'node:fs/promises';
 import {dirname, join} from 'node:path';
 import {buildBlockset, dropMatched, parseDomain} from './blocklist-lib.js';
 import {parseCidrs} from '../src/ipv4.js';
-import {resolve6} from 'node:dns/promises';
-import {pinnableRanges, v6Prefix} from './cloudflare-probe.js';
+import {describeCloudflare} from './cloudflare-probe.js';
 import {
   BLOCKLIST,
   BLOCKLIST_PRECISION_BITS,
@@ -99,24 +98,7 @@ async function main() {
     .map(line => line.trim())
     .filter(Boolean);
   parseCidrs(cloudflare);
-  console.log(
-    `Trying ${cloudflare.length} Cloudflare ranges for ${PROBE_HOST}`
-  );
-  const pinnable = await pinnableRanges(cloudflare, PROBE_HOST);
-  console.log(
-    `${cloudflare.length} Cloudflare IPv4 ranges, ${pinnable.length} answer for ${PROBE_HOST}: ${pinnable.join(' ')}`
-  );
-  if (!pinnable.length) {
-    throw new Error(`no Cloudflare range answered for ${PROBE_HOST}`);
-  }
-
-  // The prefix of the domain's own IPv6 addresses, for the profile page.
-  const prefix6 = v6Prefix(await resolve6(PROBE_HOST).catch(() => []));
-  console.log(
-    prefix6
-      ? `IPv6 prefix of ${PROBE_HOST}: ${prefix6}`
-      : `no IPv6 prefix for ${PROBE_HOST}: the profile page will offer IPv4 only`
-  );
+  const cloudflareIps = await describeCloudflare(cloudflare, PROBE_HOST);
 
   console.log(`Encoding ${domains.size} domains`);
   const blockset = buildBlockset(domains, BLOCKLIST_PRECISION_BITS);
@@ -128,7 +110,7 @@ async function main() {
   );
   await writeFile(
     join(dirname(outPath), 'cloudflare-ips.json'),
-    JSON.stringify({v4: cloudflare, pinnable, v6prefix: prefix6})
+    JSON.stringify(cloudflareIps)
   );
   await writeFile(outPath, blockset);
   console.log(`${blockset.byteLength} bytes -> ${outPath}`);

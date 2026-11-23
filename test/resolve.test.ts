@@ -928,7 +928,7 @@ describe('best-effort ECH for Cloudflare-hosted names', () => {
 
   /** Loads what the build writes to cloudflare-ips.json. */
   const withRanges = (extra: Record<string, unknown> = {}) => {
-    loadCloudflareRanges(['104.16.0.0/13', '172.64.0.0/13']);
+    loadCloudflareRanges({v4: ['104.16.0.0/13', '172.64.0.0/13']});
     return extra;
   };
 

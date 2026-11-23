@@ -22,6 +22,19 @@ export function setEcsEnabled(on: boolean): void {
   enabled = on;
 }
 
+/** An ECS option with source prefix 0: "do not locate the client". */
+const NO_SUBNET = [...u16(OPTION_ECS), ...u16(4), ...u16(1), 0, 0];
+
+/**
+ * The option that asks not to be located (RFC 7871 7.1.2), sent when there is
+ * no subnet: a resolver such as Google's would otherwise make one up from the
+ * address this Worker connects from, which is Cloudflare's.
+ * @return null when ECS is turned off: no option at all.
+ */
+export function noSubnet(): number[] | null {
+  return enabled ? NO_SUBNET : null;
+}
+
 /**
  * Parses an IPv4 or IPv6 address. IPv4-mapped IPv6 becomes plain IPv4.
  * @return The family (FAMILY_IPV4 or FAMILY_IPV6) and the address bytes; null

@@ -5,7 +5,9 @@
  * ranges answer 403 or nothing.
  */
 
+import {resolve6} from 'node:dns/promises';
 import {request} from 'node:https';
+import type {CloudflareIps} from '../src/cloudflare-ips.js';
 
 /** Longest wait for one address, in ms. */
 const TIMEOUT_MS = 5000;
@@ -59,7 +61,7 @@ function answers(address: string, host: string): Promise<boolean> {
  * @param host The domain to ask for.
  * @return The ranges where at least one sample address answered 200.
  */
-export async function pinnableRanges(
+async function pinnableRanges(
   ranges: string[],
   host: string
 ): Promise<string[]> {
@@ -89,4 +91,29 @@ export function v6Prefix(aaaa: string[]): string | null {
     aaaa[0] ?? ''
   );
   return match ? match[1].toLowerCase() : null;
+}
+
+/**
+ * Learns what the profile page needs: which of the published ranges answer for
+ * `host`, and its IPv6 prefix (a DNS lookup, so no IPv6 is needed here, which
+ * a GitHub runner does not have).
+ * @throws If no range answers.
+ */
+export async function describeCloudflare(
+  published: string[],
+  host: string
+): Promise<CloudflareIps> {
+  console.log(`Trying ${published.length} Cloudflare ranges for ${host}`);
+  const pinnable = await pinnableRanges(published, host);
+  console.log(`${pinnable.length} answer: ${pinnable.join(' ')}`);
+  if (!pinnable.length) {
+    throw new Error(`no Cloudflare range answered for ${host}`);
+  }
+  const v6prefix = v6Prefix(await resolve6(host).catch(() => []));
+  console.log(
+    v6prefix
+      ? `IPv6 prefix of ${host}: ${v6prefix}`
+      : `no IPv6 prefix for ${host}: the profile page will offer IPv4 only`
+  );
+  return {v4: published, pinnable, v6prefix};
 }

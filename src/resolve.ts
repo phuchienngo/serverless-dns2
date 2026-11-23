@@ -63,7 +63,10 @@ function clientChoseEcs(options: ResolveOptions): boolean {
   return ecsEnabled() && !!options.ecs;
 }
 
-/** The client subnet to send: the one chosen by the client, else its IP's. */
+/**
+ * The client subnet to send: the one chosen by the client, else its IP's;
+ * null for none (or with ECS turned off).
+ */
 function ecsOf(options: ResolveOptions): number[] | null {
   if (!ecsEnabled()) {
     return null;
