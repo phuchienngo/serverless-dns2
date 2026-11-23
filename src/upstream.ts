@@ -51,12 +51,12 @@ function answers(query: Uint8Array, reply: Uint8Array): boolean {
     end += query[end] + 1;
   }
   end += 1 + 4; // Root label, type and class.
-  return (
-    questionCount(reply) === 1 &&
-    reply.length >= end &&
-    lower(reply.subarray(HEADER_BYTES, end)).every(
-      (c, i) => c === lower(query.subarray(HEADER_BYTES, end))[i]
-    )
+  if (questionCount(reply) !== 1 || reply.length < end) {
+    return false;
+  }
+  const asked = lower(query.subarray(HEADER_BYTES, end));
+  return lower(reply.subarray(HEADER_BYTES, end)).every(
+    (c, i) => c === asked[i]
   );
 }
 
@@ -154,8 +154,8 @@ export function queryFlags(q: Question): QueryFlags {
 
 /**
  * Sends one query with ECS and one without, in parallel. The ECS answer takes
- * precedence unless it is REFUSED (RFC 7871 7.1.3) or fails. Both are hedged, so a slow
- * upstream connection does not hold either of them back.
+ * precedence unless it is REFUSED (RFC 7871 7.1.3) or fails. Both are
+ * hedged, so a slow upstream connection does not hold either of them back.
  */
 export async function queryUpstream(
   question: number[],

@@ -50,7 +50,7 @@ interface Raw {
 }
 
 /** A query written byte by byte, so that it can be wrong in any one place. */
-function raw(label: number, o: Raw = {}): Uint8Array {
+function raw(n: number, o: Raw = {}): Uint8Array {
   return new Uint8Array([
     ...u16(ID),
     ...u16(o.flags ?? 0x0100), // RD.
@@ -58,7 +58,7 @@ function raw(label: number, o: Raw = {}): Uint8Array {
     ...u16(o.an ?? 0),
     ...u16(0),
     ...u16(o.ar ?? 0),
-    ...(o.name ?? encodeName(`c${label}.inputs.example.com`)),
+    ...(o.name ?? encodeName(`c${n}.inputs.example.com`)),
     ...u16(o.type ?? T.A),
     ...u16(o.cls ?? 1),
     ...(o.tail ?? []),
@@ -423,13 +423,13 @@ function checkAnswer(query: Uint8Array, body: Uint8Array): void {
 }
 
 describe('what each kind of input gets back', () => {
-  for (const [description, make, expected] of inputs) {
+  for (const [index, [description, make, expected]] of inputs.entries()) {
     for (const [method, send] of [
       ['POST', post],
       ['GET', get],
     ] as const) {
       test(`${description} (${method})`, async () => {
-        const query = make(inputs.findIndex(i => i[0] === description));
+        const query = make(index);
         const res = await send(query);
         assert.equal(res.status, expected.http, 'HTTP status');
         if (expected.http === 200) {

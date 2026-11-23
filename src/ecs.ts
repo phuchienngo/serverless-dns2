@@ -158,16 +158,13 @@ export function parseEcsParam(param: string): number[] | null {
  *     is so that no subnet is used (RFC 7871 7.1.2), and comes back with scope 0.
  */
 export function clientEcs(data: Uint8Array | null): number[] | null {
-  if (!data || data.length < 4) {
+  if (!data || !validEcs(data)) {
     return null;
   }
   const family = (data[0] << 8) | data[1];
   const source = data[2];
   const address = Array.from(data.subarray(4));
   const spec = ECS_FAMILIES[family];
-  if (!spec || source > spec.bits || address.length !== Math.ceil(source / 8)) {
-    return null;
-  }
   if (source === 0 || address.every(b => b === 0)) {
     return buildOption(family, [], 0);
   }
