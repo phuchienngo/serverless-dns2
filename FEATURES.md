@@ -17,11 +17,11 @@ Every feature, the standard it follows, where it lives and which test covers it.
 | Negative answers carry a SOA, minimum TTL | RFC 2308 | `response.ts` | `dns.test.ts`, `resolve.test.ts` |
 | Padding of responses to 468 bytes | RFC 7830, 8467 | `response.ts` | `dns.test.ts`, `resolve.test.ts` |
 | Extended DNS Errors (15 blocked, 3 stale answer, 19 stale NXDOMAIN, 23 upstream unreachable) | RFC 8914 | `response.ts`, `resolve.ts` | `dns.test.ts`, `blocking.test.ts`, `resolve.test.ts` |
-| Client subnet, only with `ECS_ENABLED` (off by default: Cloudflare's resolver ignores it; off = no ECS option, one query, one cache entry for all): /24 and /48 from `CF-Connecting-IP`, client-chosen subnet, source prefix 0 = not located (also sent when there is no subnet, so the upstream makes none up), per-subnet cache, no ECS in responses to queries without one; with a subnet, queries with and without ECS run in parallel and the ECS answer wins unless REFUSED | RFC 7871 | `ecs.ts`, `resolve.ts`, `upstream.ts`, `query.ts` | `ecs.test.ts`, `resolve.test.ts`, `handlers.test.ts` |
+| Client subnet, only with `ECS_ENABLED` (off by default: Cloudflare's resolver ignores it; off = no ECS option, one query, one cache entry for all): /24 and /48 from `CF-Connecting-IP`, client-chosen subnet, source prefix 0 = not located (also sent when there is no subnet, so the upstream makes none up), per-subnet cache, no ECS in responses to queries without one; with a subnet, queries with and without ECS run in parallel and the ECS answer wins unless it is REFUSED or fails; a malformed client subnet is FORMERR | RFC 7871 | `ecs.ts`, `resolve.ts`, `upstream.ts`, `query.ts` | `ecs.test.ts`, `resolve.test.ts`, `handlers.test.ts` |
 | Cache: TTL countdown (answer, authority, additional), LRU, Cache API, early refresh | RFC 1035, 2181 | `cache.ts` | `cache.test.ts`, `resolve.test.ts` |
 | Serve-stale with TTL 30 and EDE 3 | RFC 8767 (deliberate deviation: served at once, not after a failed refresh) | `cache.ts`, `resolve.ts` | `cache.test.ts`, `resolve.test.ts` |
 | Minimum cache TTL 60 s | none (deliberate deviation) | `cache.ts` | `cache.test.ts` |
-| Request coalescing, hedged upstream queries (every one, with or without ECS) | none | `upstream.ts`, `resolve.ts` | `upstream.test.ts`, `resolve.test.ts` |
+| Request coalescing, hedged upstream queries (every one, with or without ECS) | none | `upstream.ts`, `resolve.ts` | `upstream.test.ts`, `resolve.test.ts`, `upstream-failures.test.ts` |
 | `localhost` answers | RFC 6761 | `resolve.ts` | `resolve.test.ts` |
 | Undelegated names, private reverse zones, `.alt` | RFC 6761, 6303, 8375, 9476 | `undelegated.ts` | `undelegated.test.ts`, `resolve.test.ts` |
 | ANY gets HINFO | RFC 8482 | `resolve.ts` | `resolve.test.ts` |
@@ -45,6 +45,24 @@ Every feature, the standard it follows, where it lives and which test covers it.
 | DNS rebinding protection: private, loopback, link-local and shared addresses (also in HTTPS/SVCB hints) get NXDOMAIN with EDE 15; `allow` rules exempt | none (as dnsmasq `stop-dns-rebind`, Unbound `private-address`) | `rebinding.ts`, `blocking.ts` | `rebinding.test.ts`, `blocking.test.ts` |
 | CNAME uncloaking | none | `resolve.ts` | `blocking.test.ts` |
 | JSON/RFC 3597 record text, AAAA compression | RFC 3597, 5952 | `format.ts` | `format.test.ts` |
+
+## Trade-offs
+
+Where this gateway spends the upstream's capacity (or a client's privacy) to save latency. Accepted, because the upstream is a public resolver built for this load and the gateway serves a handful of clients; revisit them if the traffic grows or the upstream changes.
+
+| Choice | What it costs | Why it is accepted |
+|---|---|---|
+| Every miss in the isolate's memory asks the upstream, even when the Cache API holds the answer (the two race, the first wins, the upstream call renews the cache) | One upstream query per such request: the Cache API saves latency, not upstream load. The largest of the costs here, and the one that grows with traffic | The answer comes at the speed of the faster one, and the cache is always renewed, so nothing served from it is far out of date. Skipping the upstream when the Cache API entry is fresh would cut the load but add latency on those requests; load is not a goal here, latency is, so it is kept as it is |
+| Hedging: a query still pending after 3x the recent average latency (20-80 ms) is sent again, to the same or the backup upstream | At most one extra query, only for a slow one: few when the upstream is healthy (not measured), up to twice the queries while it is slow or failing | The tail of the latency (p90, max) is where most of the delay is; the extra query often shares the open connection |
+| With ECS on and a subnet, one query with it and one without, in parallel (`ECS_ENABLED`, off by default) | Twice the upstream queries, each also hedged: up to four per request | The one without the subnet is the fallback for a resolver that refuses ECS (RFC 7871 7.1.3) and for one that fails on it; off, which suits Cloudflare's resolver, costs none of this |
+| Early refresh: an entry with under 10 s left is renewed on 1 in 6 lookups | A few queries just before an entry expires, for names that are asked often | Popular names are renewed gradually, so a client rarely waits for an expired one |
+| Serve-stale: an expired answer (up to 6 h) is returned at once and renewed in the background | One background query for the first request after it expires | The client never waits; if the upstream is down the stale answer is still served |
+| Minimum cache TTL of 60 s | Answers can be up to 60 s older than their TTL says (RFC deviation) | Short TTLs of CDNs would otherwise bring a query on almost every request |
+| Coalescing: identical concurrent queries share one upstream call | None; it saves queries | If that call fails the others try on their own once |
+| HTTPS queries for Cloudflare-hosted names do an extra A lookup (to recognise them for the ECH key), and DNS64 does an A lookup beside AAAA | One more upstream query for those requests only, and for DNS64 only on request | Both are optional best-effort features; the lookup runs alongside the main one |
+| A query with no subnet is sent with ECS source prefix 0 (when ECS is on) | None; it is a privacy choice | Google would otherwise invent a subnet from the Worker's own address |
+| The client's address is sent upstream as a /24 (/48) subnet (when ECS is on) | Reveals the neighbourhood of a client to the upstream | The point of ECS is that a CDN answers with a server near the client; a client can send prefix 0 to refuse it |
+| The upstream is trusted: its answer is checked only for id and question, not validated | A wrong but well-formed answer from it would be served and cached | It is reached over HTTPS and chosen by the operator; validating DNSSEC is left to the client |
 
 ## Known gaps
 

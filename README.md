@@ -9,7 +9,7 @@ Config: the only secret is the optional `COOKIE_SECRET` (see DNS Cookies below).
 
 `src/worker.ts` hands each request to `route()` in `src/handlers.ts`, which sends `/dns-query` and `/resolve` to their handlers, `/apple` and `/cloudflare-ips.json` to `src/profile.ts`, and returns HTTP 404 for other paths. `bun run build-lists` writes the lists to `build/` for bundling into the Worker.
 
-Dev (with [Bun](https://bun.sh)): `bun install`, `bun run check` (tsc), `bun test`, `bun run format` (Prettier, Google/gts style).
+Dev (with [Bun](https://bun.sh)): `bun install`, `bun run check` (tsc), `bun test` (the tests with a table of inputs and what each must give back are `test/inputs.test.ts`, `json-inputs.test.ts` and `upstream-failures.test.ts`), `bun run format` (Prettier, Google/gts style).
 
 Deploy: push to `main` (GitHub Actions builds the lists and runs `wrangler deploy`), or `bun run deploy` from your machine.
 
@@ -22,7 +22,7 @@ then set `dns_ddr_version 1` and `networkmonitor_async_privdns_resolution 1` via
 ## Extras
 
 - ECS is off by default (`ECS_ENABLED` in `src/config.ts`), because the upstream is now Cloudflare's resolver, which does not pass a client subnet on: no ECS is sent or kept, so one upstream query is made and one answer is cached for every client. Turn it on for a resolver that uses it (Google's); the rest of this item is about that case.
-- Honours a client-supplied ECS (dnsproxy / AdGuard Home `edns-addr`). Source prefix 0, such as Firefox's `::/0`, is sent as supplied (RFC 7871 7.1.2). Otherwise the subnet is the client's address from `CF-Connecting-IP` (/24, /48). A query with no subnet is still sent with ECS source prefix 0, because Google would otherwise make one up from the Worker's own Cloudflare address. When the query has a subnet, one query with ECS and one without are sent in parallel; the ECS answer is used unless it is REFUSED (RFC 7871 7.1.3; Akamai refuses ECS from Google). The one that loses is not cancelled.
+- Honours a client-supplied ECS (dnsproxy / AdGuard Home `edns-addr`). Source prefix 0, such as Firefox's `::/0`, is sent as supplied (RFC 7871 7.1.2). Otherwise the subnet is the client's address from `CF-Connecting-IP` (/24, /48). A query with no subnet is still sent with ECS source prefix 0, because Google would otherwise make one up from the Worker's own Cloudflare address. When the query has a subnet, one query with ECS and one without are sent in parallel; the ECS answer is used unless it is REFUSED (RFC 7871 7.1.3; Akamai refuses ECS from Google) or fails, then the other one is. The one that loses is not cancelled. A client's own subnet option that is malformed (unknown family, wrong number of address octets, bits past the prefix) is FORMERR (RFC 7871 6, 7.2.1).
 - `ANY` queries get a minimal HINFO locally (`BLOCK_ANY`); `REDIRECTS` in `src/config.ts` answers a name with another name's A/AAAA records (now `medium.com` -> `voz.vn`); not for a query with DO, since what is made here carries no signature.
 - `/resolve?name=8.8.8.8&type=PTR` converts an IP to its reverse name.
 - The DO and CD bits of a query are passed to the upstream (DNSSEC records and `AD` come back as asked; a query with AD but no DO also gets `AD`). Answers made
@@ -31,6 +31,7 @@ then set `dns_ddr_version 1` and `networkmonitor_async_privdns_resolution 1` via
 - Padding (RFC 8467): a query with an EDNS Padding option gets its response padded to a multiple of 468 bytes. Stale
   answers carry EDE 3 (RFC 8767). `localhost` and `*.localhost` answer 127.0.0.1 / ::1 (RFC 6761), `ANY` gets a minimal
   HINFO (RFC 8482), non-QUERY opcodes get NOTIMP and EDNS versions above 0 get BADVERS. RD and the opcode are echoed.
+- When the upstream fails (HTTP error, no connection, a body that is not a DNS message, or a reply with another id or question) the client gets SERVFAIL with EDE 23, which is not cached. An expired answer still in the cache is served at once instead, whatever the upstream does. Other rcodes of the upstream are passed on, and only NOERROR and NXDOMAIN are cached.
 - Best-effort ECH: for Cloudflare-hosted names the HTTPS answer gets Cloudflare's shared `ech` key (`src/ech.ts`), added to the record the upstream sent (hints and the rest stay) or, if it sent none, as a new one; the Cloudflare IPv4 ranges it uses to recognise those names are downloaded from https://www.cloudflare.com/ips-v4 by `bun run build-lists` (the build fails if that fails), so the daily rebuild keeps them current. Not done for queries with DO, as the changed record would carry no signature.
 
 ## Standards extras
@@ -100,6 +101,7 @@ Blocked names get NXDOMAIN. The lists are part of the Worker bundle, so nothing 
 - Every upstream query (the ECS one and the one without) is hedged: it waits three times the recent average upstream latency, bounded to 20–80 ms. If the query is still pending,
   it sends a second request to `UPSTREAM_BACKUP` if set, or to `UPSTREAM` again, usually on the same connection.
   The first answer wins.
+- These speed-ups cost the upstream extra queries (every cache miss in the isolate's memory asks it, a slow query is sent twice, and with ECS on every query is sent twice): see "Trade-offs" in `FEATURES.md`.
 - `Server-Timing` on `/resolve` and `/dns-query` reports how long it took to prepare the DNS answer (`first`), including any DNS64 or DDR lookups needed for it.
 
 Build and deploy: `.github/workflows/rebuild.yml` runs `bun run build-lists` and `wrangler deploy` on every push to
