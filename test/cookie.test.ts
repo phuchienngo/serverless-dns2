@@ -61,3 +61,23 @@ describe('cookieOption is a courtesy', () => {
     assert.equal(option?.length, 20, 'works again once signing does');
   });
 });
+
+describe('cookieOption without a secret', () => {
+  test('never touches the key, whatever the platform does with an empty one', async () => {
+    const importKey = crypto.subtle.importKey;
+    let calls = 0;
+    crypto.subtle.importKey = ((...args: Parameters<typeof importKey>) => {
+      calls++;
+      return importKey.apply(crypto.subtle, args);
+    }) as typeof importKey;
+    try {
+      assert.equal(await cookieOption(q(client), 'x', undefined), null);
+      assert.equal(await cookieOption(q(client), 'x', ''), null);
+      assert.equal(calls, 0, 'a cookie signed with an empty key is forgeable');
+      await cookieOption(q(client), 'x', 'a-secret');
+      assert.equal(calls, 1, 'the counter does count a real import');
+    } finally {
+      crypto.subtle.importKey = importKey;
+    }
+  });
+});

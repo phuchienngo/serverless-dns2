@@ -50,6 +50,14 @@ beforeEach(() => {
         ...base,
         answer: [{type: T.HTTPS, ttl: 300, rdata}],
       });
+    } else if (type === T.HTTPS && name.startsWith('cfnone')) {
+      body = makeResponse(base); // No HTTPS record at all.
+    } else if (type === T.HTTPS && name.startsWith('cfech')) {
+      const rdata = [0, 1, 0, 0, 5, 0, 2, 9, 9]; // Already has an ech key.
+      body = makeResponse({
+        ...base,
+        answer: [{type: T.HTTPS, ttl: 300, rdata}],
+      });
     } else if (type === T.HTTPS) {
       body = makeResponse({
         ...base,
@@ -70,8 +78,8 @@ beforeEach(() => {
 });
 afterEach(() => upstream.restore());
 
-async function ask(name: string, ad: boolean) {
-  const q = parseQuestion(makeQuery(name, T.HTTPS, {ad}));
+async function ask(name: string, ad: boolean, dnssec = false) {
+  const q = parseQuestion(makeQuery(name, T.HTTPS, {ad, do: dnssec}));
   return parseMsg((await resolve(q, plainOptions())).body);
 }
 
@@ -89,5 +97,33 @@ describe('AD on an HTTPS answer', () => {
       'the ECH key was added'
     );
     assert.equal(msg.ad, false);
+  });
+
+  test('is kept for a client that asked with DO: no ECH key is added then', async () => {
+    const msg = await ask('cf-site.example.com', false, true);
+    assert.ok(
+      !Buffer.from(msg.answer[0].rdata).includes(Buffer.from(ECH_CONFIG))
+    );
+    assert.equal(msg.ad, true);
+  });
+
+  test('is dropped when the whole HTTPS record is made here', async () => {
+    const msg = await ask('cfnone.example.com', true);
+    assert.equal(msg.answer.length, 1, 'a record was made');
+    assert.ok(
+      Buffer.from(msg.answer[0].rdata).includes(Buffer.from(ECH_CONFIG))
+    );
+    assert.equal(msg.ad, false);
+  });
+
+  test('is kept when the record already had an ECH key (nothing is changed)', async () => {
+    const msg = await ask('cfech.example.com', true);
+    assert.equal(msg.answer.length, 1);
+    assert.equal(msg.ad, true);
+  });
+
+  test('is kept for a name that is not on Cloudflare, with or without DO', async () => {
+    assert.equal((await ask('other.example.com', true, true)).ad, true);
+    assert.equal((await ask('other2.example.com', true, false)).ad, true);
   });
 });
