@@ -4,4 +4,6 @@
   "compatibility_date": "2026-11-01",
   "workers_dev": false,
   "preview_urls": false,
+  // Keeps logs and exceptions (with message and stack) for the dashboard.
+  "observability": {"enabled": true},
 }
