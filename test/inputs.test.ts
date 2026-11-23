@@ -318,7 +318,7 @@ const inputs: Input[] = [
   ['a cookie of 40 bytes', n => raw(n, cookie(40)), answered],
   ['a cookie of 41 bytes', n => raw(n, cookie(41)), local(RCODE.FORMERR)],
 
-  // Client subnet. A malformed one is ignored, as if the client had sent none.
+  // Client subnet. A malformed one is FORMERR; a scope in a query is not checked.
   [
     'ECS IPv4 /24',
     n => raw(n, ecs([0, 1, 24, 0, 192, 0, 2])),
@@ -335,32 +335,32 @@ const inputs: Input[] = [
     {...answered, opt: true},
   ],
   [
-    'ECS of an unknown family is ignored',
+    'ECS of an unknown family is FORMERR (RFC 7871 7.2.1)',
     n => raw(n, ecs([0, 3, 24, 0, 1, 2, 3])),
-    answered,
+    local(RCODE.FORMERR),
   ],
   [
-    'ECS prefix longer than the family is ignored',
+    'ECS prefix longer than the family is FORMERR',
     n => raw(n, ecs([0, 1, 33, 0, 1, 2, 3, 4, 5])),
-    answered,
+    local(RCODE.FORMERR),
   ],
   [
-    'ECS address shorter than its prefix is ignored',
+    'ECS address shorter than its prefix is FORMERR (RFC 7871 6)',
     n => raw(n, ecs([0, 1, 24, 0, 192, 0])),
-    answered,
+    local(RCODE.FORMERR),
   ],
   [
-    'ECS address longer than its prefix is ignored',
+    'ECS address longer than its prefix is FORMERR (RFC 7871 6)',
     n => raw(n, ecs([0, 1, 24, 0, 192, 0, 2, 7])),
-    answered,
+    local(RCODE.FORMERR),
   ],
   [
-    'ECS with bits set past its prefix is ignored',
+    'ECS with bits set past its prefix is FORMERR (RFC 7871 6)',
     n => raw(n, ecs([0, 1, 20, 0, 192, 0, 0xff])),
-    answered,
+    local(RCODE.FORMERR),
   ],
   [
-    'ECS with a non-zero scope in a query is ignored',
+    'ECS with a non-zero scope in a query is accepted',
     n => raw(n, ecs([0, 1, 24, 16, 192, 0, 2])),
     answered,
   ],

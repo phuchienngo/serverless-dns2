@@ -78,6 +78,28 @@ function parseIp(ip: string): {family: number; bytes: number[]} | null {
 }
 
 /**
+ * RFC 7871 6 and 7.2.1: whether a client's option is well formed. A server
+ * receiving one with a FAMILY it does not know (MUST), too few or too many
+ * ADDRESS octets, or bits set past the SOURCE PREFIX-LENGTH (SHOULD) answers
+ * FORMERR. The SCOPE PREFIX-LENGTH of a query is not checked: the RFC only
+ * asks senders to make it 0.
+ * @param data The option's data, after its code and length.
+ */
+export function validEcs(data: Uint8Array): boolean {
+  if (data.length < 4) {
+    return false;
+  }
+  const spec = ECS_FAMILIES[(data[0] << 8) | data[1]];
+  const source = data[2];
+  const address = data.subarray(4);
+  if (!spec || source > spec.bits || address.length !== Math.ceil(source / 8)) {
+    return false;
+  }
+  const spare = address.length * 8 - source; // Bits past the prefix.
+  return !spare || (address[address.length - 1] & ((1 << spare) - 1)) === 0;
+}
+
+/**
  * Builds the EDNS client-subnet option.
  * @param prefix Source prefix length; defaults to /24 (IPv4) or /48
  *     (IPv6).
@@ -128,7 +150,8 @@ export function parseEcsParam(param: string): number[] | null {
  * `edns-addr`). The subnet is clamped to /24 (IPv4) or /48 (IPv6) to keep the
  * cache effective and the client's privacy.
  * @param data The data of the option, as sent; null if the query had none.
- * @return The option bytes; null if there is none or it is malformed (the
+ * @return The option bytes; null if there is none or it is malformed (a query
+ *     with a malformed one is refused before this, see `validEcs`; the
  *     connecting IP is used then). An empty one (source prefix 0 or an
  *     all-zero address: a privacy signal such as Firefox's `::/0`, "do not
  *     locate me") gives a source-prefix-0 option, which is sent upstream as it

@@ -4,6 +4,7 @@
  */
 
 import {MAX_QUERY} from './config.js';
+import {validEcs} from './ecs.js';
 import {
   CLASS_IN,
   OPTION_COOKIE,
@@ -72,9 +73,10 @@ function findOpt(buf: Uint8Array): {opt: QueryOpt | null; malformed: boolean} {
       ? [...buf.subarray(cookie.start + 4, cookie.end)]
       : null;
     const subnet = options.find(o => o.code === OPTION_ECS);
+    const subnetData = subnet ? buf.slice(subnet.start + 4, subnet.end) : null;
     return {
       opt: {
-        ecs: subnet ? buf.slice(subnet.start + 4, subnet.end) : null,
+        ecs: subnetData,
         flags: view.getUint16(first.start + 6),
         version: buf[first.start + 5],
         padding: options.some(o => o.code === OPTION_PADDING),
@@ -85,7 +87,9 @@ function findOpt(buf: Uint8Array): {opt: QueryOpt | null; malformed: boolean} {
         found.length > 1 ||
         first.start - first.name !== 1 ||
         !exact ||
-        (cookieBytes !== null && !validCookie(cookieBytes.length)),
+        (cookieBytes !== null && !validCookie(cookieBytes.length)) ||
+        // A subnet that is not well formed is FORMERR too (RFC 7871 6, 7.2.1).
+        (subnetData !== null && !validEcs(subnetData)),
     };
   } catch {
     return {opt: null, malformed: true}; // The records do not parse.
