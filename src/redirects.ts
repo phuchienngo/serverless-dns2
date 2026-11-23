@@ -57,5 +57,8 @@ export function redirectedResult(
       a => a.section === 'answer' && (a.type === TYPE_A || a.type === TYPE_AAAA)
     )
     .map(a => [...QUESTION_POINTER, ...resp.subarray(a.start, a.end)]);
-  return {body: respond(q, rcodeOf(resp), addresses), ttl: minTtl(resp, records)};
+  return {
+    body: respond(q, rcodeOf(resp), addresses),
+    ttl: minTtl(resp, records),
+  };
 }

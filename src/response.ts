@@ -346,7 +346,10 @@ export function cnameTargets(
  * @return Smallest answer TTL in seconds (at most an hour), or 30
  *     when there is no answer or the message cannot be read.
  */
-export function minTtl(resp: Uint8Array, records?: readonly DnsRecord[]): number {
+export function minTtl(
+  resp: Uint8Array,
+  records?: readonly DnsRecord[]
+): number {
   try {
     let ttl = MAX_TTL;
     let hasTtl = false;
@@ -356,7 +359,11 @@ export function minTtl(resp: Uint8Array, records?: readonly DnsRecord[]): number
         hasTtl = true;
       } else if (record.section === 'authority' && record.type === TYPE_SOA) {
         // A negative answer's SOA may also limit a preceding CNAME chain.
-        const view = new DataView(resp.buffer, resp.byteOffset, resp.byteLength);
+        const view = new DataView(
+          resp.buffer,
+          resp.byteOffset,
+          resp.byteLength
+        );
         return Math.min(ttl, record.ttl, view.getUint32(record.end - 4));
       }
     }
