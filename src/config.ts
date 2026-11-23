@@ -9,14 +9,14 @@ export const MAX_DNS_PARAM = 700;
 /** How long to wait for the upstream resolver. */
 export const UPSTREAM_TIMEOUT_MS = 4000;
 /** Upstream DoH resolver, and an optional second one for hedged queries. */
-export const UPSTREAM = 'https://dns.google/dns-query';
+export const UPSTREAM = 'https://dns11.quad9.net/dns-query';
 export const UPSTREAM_BACKUP: string | null = null;
 
 /**
  * Send the client's subnet to the upstream (EDNS Client Subnet, RFC 7871), so
  * that a CDN answers with a server near the client. Turn it off for a resolver
- * that does not pass it on (Cloudflare's 1.1.1.1 and Gateway do not; Google's does): the query then
- * carries no ECS, one query is made instead of two, and the cache keeps one
+ * that does not pass it on (Cloudflare's 1.1.1.1 and Gateway do not; Google's and Quad9's dns11 do): the
+ * query then carries no ECS, one query is made instead of two, and the cache keeps one
  * answer for every client.
  */
 export const ECS_ENABLED = true;
