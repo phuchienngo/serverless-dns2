@@ -293,3 +293,72 @@ describe('what DNS64 counts as an empty AAAA answer (RFC 6147 5.1.4)', () => {
     }
   });
 });
+
+describe('IPv4 addresses DNS64 never embeds (RFC 6052 3.1, RFC 5735 3, RFC 6598)', () => {
+  // The special-use blocks of RFC 5735 section 3, and 100.64.0.0/10 (RFC 6598).
+  const BLOCKS: Array<[string, number]> = [
+    ['0.0.0.0', 8],
+    ['10.0.0.0', 8],
+    ['100.64.0.0', 10],
+    ['127.0.0.0', 8],
+    ['169.254.0.0', 16],
+    ['172.16.0.0', 12],
+    ['192.0.0.0', 24],
+    ['192.0.2.0', 24],
+    ['192.88.99.0', 24],
+    ['192.168.0.0', 16],
+    ['198.18.0.0', 15],
+    ['198.51.100.0', 24],
+    ['203.0.113.0', 24],
+    ['224.0.0.0', 4],
+    ['240.0.0.0', 4],
+  ];
+  const toInt = (a: string) =>
+    a.split('.').reduce((n, part) => n * 256 + Number(part), 0);
+  const toText = (n: number) =>
+    [24, 16, 8, 0].map(shift => Math.floor(n / 2 ** shift) % 256).join('.');
+  const ranges = BLOCKS.map(([a, bits]) => {
+    const first = toInt(a);
+    return {first, last: first + 2 ** (32 - bits) - 1};
+  });
+  const inside = (n: number) => ranges.some(r => n >= r.first && n <= r.last);
+
+  const question = () => parseQuestion(makeQuery('a.test', T.AAAA));
+  const empty: Result = {
+    body: makeResponse({qname: 'a.test', qtype: T.AAAA}),
+    ttl: 60,
+  };
+  let nextKey = 0;
+  async function embedded(address: string) {
+    const lookup: Result = {
+      body: makeResponse({
+        qname: 'a.test',
+        qtype: T.A,
+        answer: [{type: T.A, ttl: 120, rdata: ip4(address)}],
+      }),
+      ttl: 120,
+    };
+    const out = await withDns64(
+      question(),
+      `https://dns.test/__cache/${nextKey++}/dns64`,
+      Promise.resolve(empty),
+      async () => lookup
+    );
+    return out !== empty;
+  }
+
+  for (const [i, {first, last}] of ranges.entries()) {
+    test(`${BLOCKS[i][0]}/${BLOCKS[i][1]}: both ends are left alone`, async () => {
+      assert.equal(await embedded(toText(first)), false, toText(first));
+      assert.equal(await embedded(toText(last)), false, toText(last));
+    });
+
+    test(`${BLOCKS[i][0]}/${BLOCKS[i][1]}: the addresses next to it are embedded`, async () => {
+      for (const n of [first - 1, last + 1]) {
+        if (n >= 0 && n <= 0xffffffff && !inside(n)) {
+          assert.equal(await embedded(toText(n)), true, toText(n));
+        }
+      }
+    });
+  }
+});
