@@ -12,7 +12,7 @@ import {
 } from './config.js';
 import {noSubnet} from './ecs.js';
 import {buildQuery} from './query.js';
-import {RCODE_REFUSED} from './constants.js';
+import {RCODE_NOERROR, RCODE_NXDOMAIN, RCODE_REFUSED} from './constants.js';
 import {
   encodeName,
   FLAG_QR_OR_RA,
@@ -30,6 +30,34 @@ import type {Question, Result} from './types.js';
 interface UpstreamReply {
   body: Uint8Array;
   records: DnsRecord[];
+}
+
+const lower = (b: Uint8Array) => b.map(c => (c >= 65 && c <= 90 ? c + 32 : c));
+
+/**
+ * @return Whether `reply` answers `query`: the same id and the same question
+ *     (compared without regard to case, which an upstream may change). A reply
+ *     with no question is only an error reply.
+ */
+function answers(query: Uint8Array, reply: Uint8Array): boolean {
+  if (reply[0] !== query[0] || reply[1] !== query[1]) {
+    return false;
+  }
+  if (questionCount(reply) === 0) {
+    return ![RCODE_NOERROR, RCODE_NXDOMAIN].includes(rcodeOf(reply));
+  }
+  let end = HEADER_BYTES; // The end of the query's name.
+  while (query[end] !== 0) {
+    end += query[end] + 1;
+  }
+  end += 1 + 4; // Root label, type and class.
+  return (
+    questionCount(reply) === 1 &&
+    reply.length >= end &&
+    lower(reply.subarray(HEADER_BYTES, end)).every(
+      (c, i) => c === lower(query.subarray(HEADER_BYTES, end))[i]
+    )
+  );
 }
 
 /**
@@ -55,7 +83,11 @@ async function post(
       throw new Error(`upstream ${response.status}`);
     }
     const body = new Uint8Array(await response.arrayBuffer());
-    if (body.length < HEADER_BYTES || (body[2] & FLAG_QR_OR_RA) === 0) {
+    if (
+      body.length < HEADER_BYTES ||
+      (body[2] & FLAG_QR_OR_RA) === 0 ||
+      !answers(wire, body)
+    ) {
       throw new Error('bad upstream response');
     }
     return {body, records: readRecords(body)};
@@ -122,7 +154,7 @@ export function queryFlags(q: Question): QueryFlags {
 
 /**
  * Sends one query with ECS and one without, in parallel. The ECS answer takes
- * precedence unless it is REFUSED (RFC 7871 7.1.3). Both are hedged, so a slow
+ * precedence unless it is REFUSED (RFC 7871 7.1.3) or fails. Both are hedged, so a slow
  * upstream connection does not hold either of them back.
  */
 export async function queryUpstream(
@@ -135,9 +167,13 @@ export async function queryUpstream(
     return preferred;
   }
   const fallback = forward(buildQuery(question, noSubnet(), flags));
-  void fallback.catch(() => {}); // Only read if the ECS answer is REFUSED.
-  const reply = await preferred;
-  return rcodeOf(reply.body) === RCODE_REFUSED ? fallback : reply;
+  void fallback.catch(() => {}); // Only read if the ECS answer is unusable.
+  try {
+    const reply = await preferred;
+    return rcodeOf(reply.body) === RCODE_REFUSED ? fallback : reply;
+  } catch {
+    return fallback; // The subnet query failed; the other one may not have.
+  }
 }
 
 /**
@@ -156,6 +192,9 @@ export async function askUpstream(
   }
   const {body, records} = await queryUpstream(q.raw, ecs, flags);
   body.set(u16(q.id), 0);
+  if (questionCount(body) === 1) {
+    body.set(q.raw, HEADER_BYTES); // The client's own case (RFC 4343).
+  }
   return {body, ttl: minTtl(body, records)};
 }
 
