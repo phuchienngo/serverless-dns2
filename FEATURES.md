@@ -13,7 +13,7 @@ Every feature, the standard it follows, where it lives and which test covers it.
 | JSON API `/resolve` (name, type, do, cd, ct, subnet, PTR from IP) | Google DoH JSON | `handlers.ts`, `format.ts` | `handlers.test.ts`, `format.test.ts` |
 | Message parsing and building (names up to 255 octets, CD echoed), case kept (0x20) | RFC 1035, 4343 | `wire.ts`, `query.ts`, `response.ts` | `dns.test.ts` |
 | EDNS0: OPT only if the query had one, DO echoed, BADVERS, extended rcode | RFC 6891 | `query.ts`, `response.ts`, `resolve.ts` | `dns.test.ts`, `resolve.test.ts` |
-| DNSSEC passthrough: DO, CD, AD | RFC 3225, 4035, 6840 5.7 | `resolve.ts`, `query.ts` | `resolve.test.ts` |
+| DNSSEC passthrough: DO, CD, AD (AD is dropped on an answer this gateway changes, such as the ECH key added to an HTTPS record) | RFC 3225, 4035, 6840 5.7 | `resolve.ts`, `query.ts` | `resolve.test.ts` |
 | Negative answers carry a SOA, minimum TTL | RFC 2308 | `response.ts` | `dns.test.ts`, `resolve.test.ts` |
 | Padding of responses to 468 bytes | RFC 7830, 8467 | `response.ts` | `dns.test.ts`, `resolve.test.ts` |
 | Extended DNS Errors (15 blocked, 3 stale answer, 19 stale NXDOMAIN, 23 upstream unreachable) | RFC 8914 | `response.ts`, `resolve.ts` | `dns.test.ts`, `blocking.test.ts`, `resolve.test.ts` |
@@ -66,10 +66,13 @@ Where this gateway spends the upstream's capacity (or a client's privacy) to sav
 
 ## Checked against the RFC texts
 
-The rules that bind a server were read in the text of each RFC (not recalled from memory), and the code fixed where it differed: 7871 (ECS), 6891 (EDNS), 8484 (DoH), 7873 (cookies), 9619, 8482 (ANY), 8767 (serve-stale), 8914 (EDE), 7830/8467 (padding), 6761/6303/8375 (special names), 9462 (DDR), 9606 (RESINFO), 6147 (DNS64), 5952 (AAAA text). Not read line by line: 1035, 2181, 2308, 3225, 3597, 4035, 4343, 5936, 6052, 6840, 6895, 7050, 9460, 9476, and 8914's registry beyond the codes used.
+The rules that bind a server were read in the text of each RFC (not recalled from memory), and the code fixed where it differed: 7871 (ECS), 6891 (EDNS), 8484 (DoH), 7873 (cookies), 9619, 8482 (ANY), 8767 (serve-stale), 8914 (EDE), 7830/8467 (padding), 6761/6303/8375 (special names), 9462 (DDR), 9606 (RESINFO), 6147 (DNS64), 5952 (AAAA text), 2308 (negative caching), 4035 3.2 and 6840 5.6-5.9 and 3225 (DO, CD, AD), 7050 (`ipv4only.arpa`), 4343 and 9476 (their rules for servers), 2181 (a TTL with the top bit set counts as 0), 3597 (no names compressed or touched inside unknown records), 9460 (DNS64 leaves `ipv4hint` and `ipv6hint` alone; ECH is added to a ServiceMode record only), 5936 and 6895 (nothing that binds this gateway). Not read in full: 1035 and 6052.
 
 ## Known gaps
 
+- Negative answers (NODATA, NXDOMAIN) without an SOA record are cached for the 60 s minimum, though RFC 2308 5 says they SHOULD NOT be (nothing bounds them). The upstream sends an SOA with every real negative answer, and a unit test (`cache.test.ts`) fixes the present behaviour.
+- `.alt` is answered NXDOMAIN here, though RFC 9476 says caching servers SHOULD NOT treat it specially (the list follows dnscrypt-proxy); the answer would be the same.
+- `AAAA ipv4only.arpa` is answered here from fixed addresses, while RFC 7050 5 says a DNS64 should not do anything special for it; the answer is what synthesis gives, one upstream query cheaper.
 - DNS Cookies, RFC 7873 5.4: a query with no question and a COOKIE option (to fetch a server cookie) is answered with HTTP 400, as any query without a question is. The RFC asks a server with cookies enabled to answer it; over HTTPS a cookie protects nothing, so it is not done.
 - DNS64, RFC 6147 5.1.4: an AAAA answer with `::ffff:0:0/96` records next to usable ones is passed on as it is (the RFC says to drop the former); removing records from a message with name compression is not done.
 - Answers made here (blocked names, undelegated names, `localhost`, HINFO) carry no signatures, so a validating client that asks with DO sees an unsigned negative answer for them, apart from the forwarded cases above.

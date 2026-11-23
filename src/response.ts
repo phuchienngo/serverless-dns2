@@ -41,6 +41,10 @@ const PADDING_BLOCK = 468;
 const MAX_TTL = 3600;
 const DEFAULT_TTL = 30;
 
+/** A TTL is 31 bits; one with the top bit set counts as 0 (RFC 2181 8). */
+const MAX_WIRE_TTL = 0x7fffffff;
+const wireTtl = (ttl: number) => (ttl > MAX_WIRE_TTL ? 0 : ttl);
+
 /** UDP payload size announced in our OPT records. */
 const PAYLOAD_SIZE_RESPONSE = 1232;
 
@@ -362,7 +366,7 @@ export function minTtl(
     let hasTtl = false;
     for (const record of records ?? readRecords(resp, 'authority')) {
       if (record.section === 'answer' && record.type !== TYPE_OPT) {
-        ttl = Math.min(ttl, record.ttl);
+        ttl = Math.min(ttl, wireTtl(record.ttl));
         hasTtl = true;
       } else if (record.section === 'authority' && record.type === TYPE_SOA) {
         // A negative answer's SOA may also limit a preceding CNAME chain.
@@ -371,7 +375,11 @@ export function minTtl(
           resp.byteOffset,
           resp.byteLength
         );
-        return Math.min(ttl, record.ttl, view.getUint32(record.end - 4));
+        return Math.min(
+          ttl,
+          wireTtl(record.ttl),
+          wireTtl(view.getUint32(record.end - 4))
+        );
       }
     }
     return hasTtl ? ttl : DEFAULT_TTL;

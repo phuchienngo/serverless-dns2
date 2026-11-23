@@ -18,7 +18,7 @@ import {
   TYPE_A,
   TYPE_HTTPS,
 } from './constants.js';
-import {encodeName, parseAnswers, rcodeOf, u16} from './wire.js';
+import {FLAG_AD, encodeName, parseAnswers, rcodeOf, u16} from './wire.js';
 import {makeRecord, respond} from './response.js';
 import {inBlocks, type Ipv4Block} from './ipv4.js';
 import {Loaded} from './loaded.js';
@@ -168,6 +168,9 @@ export async function addEch(
     const changed = [...services]
       .reverse()
       .reduce((msg, r) => addSvcParam(msg, r, SVCPARAM_ECH, config), body);
+    // The records are no longer what was validated: AD must not claim it
+    // (RFC 4035 3.2.3; a query with AD but no DO gets it from the upstream).
+    changed[3] &= ~FLAG_AD;
     return {body: changed, ttl: result.ttl};
   } catch {
     return result; // ECH is best effort: keep the answer as it is.

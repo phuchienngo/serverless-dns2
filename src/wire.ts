@@ -10,6 +10,8 @@ const encoder = new TextEncoder();
 /** Header flag bits: RD is in byte 2 of a message, CD in byte 3. */
 export const FLAG_RD = 0x01;
 export const FLAG_CD = 0x10;
+/** The AD flag, in byte 3 like CD. */
+export const FLAG_AD = 0x20;
 /** The TC (truncated) flag and the AA (authoritative answer) flag, in byte 2. */
 export const FLAG_TC = 0x02;
 export const FLAG_AA = 0x04;

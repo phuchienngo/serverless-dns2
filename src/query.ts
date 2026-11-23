@@ -14,6 +14,7 @@ import {
 } from './constants.js';
 import {
   FLAG_CD,
+  FLAG_AD,
   FLAG_DO,
   FLAG_QR_OR_RA,
   FLAG_RD,
@@ -28,9 +29,6 @@ import {
   u16,
 } from './wire.js';
 import type {Question} from './types.js';
-
-/** The AD flag, in byte 3 of a message. */
-const FLAG_AD = 0x20;
 
 /** Largest wire length of a name (RFC 1035 2.3.4). */
 const MAX_NAME_BYTES = 255;
