@@ -103,6 +103,7 @@ export const BLOCKLIST = {
     'html-load.com', // Ad-block detection checks (dictionary.cambridge.org...).
     'content-loader.com', // Same as html-load.com.
     'dd.garena.com', // Garena login.
+    'l.facebook.com', // Facebook's outbound link redirector.
   ],
   block: [
     '/^ad([sxv]?[0-9]*|system)[_.-][^.]+\\.|[_.-]ad([sxv]?[0-9]*|system)[_.-]/',
