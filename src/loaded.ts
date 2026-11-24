@@ -1,8 +1,11 @@
 /**
  * @fileoverview A value loaded on first use and kept in the isolate's memory:
  * callers that ask while it loads share one load, and a failed load is not
- * retried at once.
+ * retried at once. A caller does not wait long for a load that another request
+ * started: that request may be gone, and then the load never ends.
  */
+
+import {SHARED_WAIT_MS} from './config.js';
 
 export const RETRY_DELAY_MS = 60 * 1000;
 
@@ -23,6 +26,27 @@ export class Loaded<Arg, Value> {
     private readonly retryMs = RETRY_DELAY_MS
   ) {}
 
+  /** Starts a load; its result is kept unless another load took its place. */
+  private start(arg: Arg): Promise<Value | null> {
+    const loading: Promise<Value | null> = this.load(arg)
+      .catch(() => null)
+      .then(loaded => {
+        if (this.loading === loading) {
+          this.value = loaded;
+          this.expires = Date.now() + this.ttlMs;
+          this.retryAt = loaded === null ? Date.now() + this.retryMs : 0;
+        }
+        return loaded;
+      })
+      .finally(() => {
+        if (this.loading === loading) {
+          this.loading = null;
+        }
+      });
+    this.loading = loading;
+    return loading;
+  }
+
   /** @return The value; null if it cannot be had (yet). */
   get(arg: Arg): Promise<Value | null> {
     const now = Date.now();
@@ -32,18 +56,33 @@ export class Loaded<Arg, Value> {
     if (now < this.retryAt) {
       return Promise.resolve(null);
     }
-    this.loading ??= this.load(arg)
-      .catch(() => null)
-      .then(loaded => {
-        this.value = loaded;
-        this.expires = Date.now() + this.ttlMs;
-        this.retryAt = loaded === null ? Date.now() + this.retryMs : 0;
+    const loading = this.loading;
+    return loading ? this.join(loading, arg) : this.start(arg);
+  }
+
+  /**
+   * Waits for a load that is under way, at most SHARED_WAIT_MS; after that
+   * loads again (this load becomes the one others join) and takes whichever
+   * ends first.
+   */
+  private async join(
+    loading: Promise<Value | null>,
+    arg: Arg
+  ): Promise<Value | null> {
+    const late = Symbol('late');
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const patience = new Promise<typeof late>(resolve => {
+      timer = setTimeout(resolve, SHARED_WAIT_MS, late);
+    });
+    try {
+      const loaded = await Promise.race([loading, patience]);
+      if (loaded !== late) {
         return loaded;
-      })
-      .finally(() => {
-        this.loading = null;
-      });
-    return this.loading;
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+    return Promise.race([loading, this.start(arg)]);
   }
 
   /** Forgets the value and any failure (for tests). */

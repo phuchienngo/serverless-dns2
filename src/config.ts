@@ -49,6 +49,14 @@ export const HEDGE_MIN_MS = 20;
 export const HEDGE_MAX_MS = 80;
 
 /**
+ * How long a request waits for work that another request started (the same
+ * query in flight, the ECH key being loaded) before it does the work itself.
+ * The other request may be gone (its client disconnected), and then its work
+ * never finishes; a request left waiting for it would be cancelled as hung.
+ */
+export const SHARED_WAIT_MS = 100;
+
+/**
  * What `src/log.ts` writes: `warn` is failures and slow upstream answers,
  * `error` is failures only, `off` is nothing.
  */

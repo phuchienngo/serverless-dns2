@@ -6,6 +6,7 @@
 import {
   HEDGE_MAX_MS,
   HEDGE_MIN_MS,
+  SHARED_WAIT_MS,
   SLOW_UPSTREAM_MS,
   UPSTREAM,
   UPSTREAM_BACKUP,
@@ -265,22 +266,8 @@ function retarget({body, ttl}: Result, q: Question): Result {
   return {body: copy, ttl};
 }
 
-/**
- * Runs `task` once per `key` at a time: concurrent callers share its result.
- */
-export async function coalesce(
-  key: string,
-  q: Question,
-  task: () => Promise<Result>
-): Promise<Result> {
-  const joined = pending.get(key);
-  if (joined) {
-    try {
-      return retarget(await joined, q);
-    } catch {
-      // The other request failed; fall through and try on our own.
-    }
-  }
+/** Starts `task` as the query in flight for `key`. */
+function startOwn(key: string, task: () => Promise<Result>): Promise<Result> {
   const own = task();
   pending.set(key, own);
   const done = () => {
@@ -290,4 +277,43 @@ export async function coalesce(
   };
   own.then(done, done);
   return own;
+}
+
+/**
+ * Runs `task` once per `key` at a time: concurrent callers share its result.
+ * A caller waits for the other one at most SHARED_WAIT_MS: if that request
+ * has been cancelled its work never ends, so the caller then runs `task`
+ * itself (and becomes the one others join), and takes whichever answer comes
+ * first.
+ */
+export async function coalesce(
+  key: string,
+  q: Question,
+  task: () => Promise<Result>
+): Promise<Result> {
+  const joined = pending.get(key);
+  if (!joined) {
+    return startOwn(key, task);
+  }
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const patience = new Promise<null>(resolve => {
+    timer = setTimeout(resolve, SHARED_WAIT_MS, null);
+  });
+  try {
+    const shared = await Promise.race([joined, patience]);
+    if (shared) {
+      return retarget(shared, q);
+    }
+  } catch {
+    return startOwn(key, task); // The other request failed; try on our own.
+  } finally {
+    clearTimeout(timer);
+  }
+  const own = startOwn(key, task);
+  // Whichever ends first: the other request's answer (if it fails, ours
+  // stands in) or ours, failure included, since the other may never end.
+  return Promise.race([
+    joined.then(shared => retarget(shared, q)).catch(() => own),
+    own,
+  ]);
 }
