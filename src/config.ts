@@ -93,12 +93,6 @@ export const BLOCKLIST = {
   ],
   // Names that break apps or sites when blocked. An entry covers its subdomains.
   allow: [
-    'imasdk.googleapis.com', // Ad SDK of video players, some refuse to play without it.
-    'pagead2.googlesyndication.com', // Ad-block detection checks it. Wide: all Google ads pass.
-    'googletagmanager.com', // Same as pagead2.googlesyndication.com.
-    'analytics.google.com', // Some apps stop working without it.
-    'app.appsflyer.com', // Install links (game download buttons).
-    'app.adjust.com', // Same as app.appsflyer.com.
     'js.monitor.azure.com', // Parts of Microsoft services and Azure reports.
     'c.office.com', // Office forms with a timer cannot start.
     'measure.office.com', // Office connectivity check (sdwan.measure.office.com).
@@ -109,10 +103,6 @@ export const BLOCKLIST = {
     'html-load.com', // Ad-block detection checks (dictionary.cambridge.org...).
     'content-loader.com', // Same as html-load.com.
     'dd.garena.com', // Garena login.
-    'analytics.adjust.com', // Some apps cannot sign up (Liobank on iOS).
-    'analytics.adjust.io',
-    'analytics.adjust.net.in',
-    'analytics.adjust.world',
   ],
   block: [
     '/^ad([sxv]?[0-9]*|system)[_.-][^.]+\\.|[_.-]ad([sxv]?[0-9]*|system)[_.-]/',
