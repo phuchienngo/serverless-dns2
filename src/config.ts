@@ -81,11 +81,39 @@ export const PROBE_HOST = 'dns.phuchien.me';
 
 export const BLOCKLIST = {
   lists: [
-    'https://raw.githubusercontent.com/mullvad/dns-blocklists/refs/heads/main/output/doh/doh_adblock.txt',
-    'https://raw.githubusercontent.com/mullvad/dns-blocklists/refs/heads/main/output/doh/doh_privacy.txt',
-    'https://raw.githubusercontent.com/mullvad/dns-blocklists/refs/heads/main/output/doh/doh_malware.txt',
+    // HaGeZi Multi ULTIMATE: Pro plus the most aggressive rules; it can break
+    // apps and sites, so put what breaks in `allow`.
+    'https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/ultimate-onlydomains.txt',
+    // HaGeZi Threat Intelligence Feeds, medium: malware, phishing, scams.
+    'https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/tif.medium-onlydomains.txt',
+    // HaGeZi referral domains (affiliate and tracking links). The project advises
+    // against blocking them: some search result links and unsubscribe links
+    // go through them.
+    'https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/blocklist-referral-onlydomains.txt',
   ],
-  allow: [],
+  // Names that break apps or sites when blocked. An entry covers its subdomains.
+  allow: [
+    'imasdk.googleapis.com', // Ad SDK of video players, some refuse to play without it.
+    'pagead2.googlesyndication.com', // Ad-block detection checks it. Wide: all Google ads pass.
+    'googletagmanager.com', // Same as pagead2.googlesyndication.com.
+    'analytics.google.com', // Some apps stop working without it.
+    'app.appsflyer.com', // Install links (game download buttons).
+    'app.adjust.com', // Same as app.appsflyer.com.
+    'js.monitor.azure.com', // Parts of Microsoft services and Azure reports.
+    'c.office.com', // Office forms with a timer cannot start.
+    'measure.office.com', // Office connectivity check (sdwan.measure.office.com).
+    'click.discord.com', // Discord login and verification.
+    'za.zalo.me', // Links in Zalo PC.
+    'cdn.cookielaw.org', // Cookie notices; sites break without it.
+    'wsapi.master.live', // Nimo TV app.
+    'html-load.com', // Ad-block detection checks (dictionary.cambridge.org...).
+    'content-loader.com', // Same as html-load.com.
+    'dd.garena.com', // Garena login.
+    'analytics.adjust.com', // Some apps cannot sign up (Liobank on iOS).
+    'analytics.adjust.io',
+    'analytics.adjust.net.in',
+    'analytics.adjust.world',
+  ],
   block: [
     '/^ad([sxv]?[0-9]*|system)[_.-][^.]+\\.|[_.-]ad([sxv]?[0-9]*|system)[_.-]/',
     '/^(.+[_.-])?(?:adse?rv(er?|ice)?s?[0-9]*|telemetry)[_.-]/',
@@ -108,6 +136,13 @@ export const BLOCKLIST = {
     'social.momocdn.net',
     'socialhub.mservice.com.vn',
     'socialhub.momo.vn',
+    'connect.facebook.net', // Facebook tracking embedded in other sites, and the Connect button.
+    'connect.facebook.com',
+    '/^ep[0-9]+\\.facebook\\.com$/', // ep1, ep2, ep3...: Facebook's newer tracking hosts.
+    'dns.ladipage.com', // CNAME used by ad campaigns and by scams.
+    'dns.webcake.io',
+    'dns.storecake.io',
+    'invl.io', // Marketing links inserted in video players.
   ],
 } as const;
 
