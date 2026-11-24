@@ -60,6 +60,10 @@ Not done on purpose: QNAME minimisation (RFC 9156) and the root-related RFCs (81
 this gateway forwards to one. Aggressive NSEC caching (8198) and NXDOMAIN cut (8020) would answer without asking the upstream
 from data this gateway does not validate.
 
+## Logs
+
+Workers Logs is on, but the automatic line per request is off (`invocation_logs: false` in `wrangler.jsonc`). The gateway writes a log object only when something goes wrong (`src/log.ts`): `upstream_failed` (which upstream, and why: `upstream 500`, `timeout`, `bad upstream response`), `servfail` (the name and type a client got SERVFAIL for) and `slow_upstream` (an answer slower than `SLOW_UPSTREAM_MS`, 300 ms). `LOG_LEVEL` in `src/config.ts` picks what is written: `warn` (all), `error` (failures only) or `off`. At most one line of each kind every 10 s per isolate; `held` says how many were skipped. Answers that work are not logged, and no client address is. The line is an object, so each field can be filtered on in the dashboard, and a failure carries its `Error`, so Workers Issues can group it.
+
 ## Blocklist
 
 1. Put your sources in `BLOCKLIST.lists` in `src/config.ts`, with any `allow` and `block` rules.

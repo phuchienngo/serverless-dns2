@@ -6,11 +6,13 @@
 import {
   HEDGE_MAX_MS,
   HEDGE_MIN_MS,
+  SLOW_UPSTREAM_MS,
   UPSTREAM,
   UPSTREAM_BACKUP,
   UPSTREAM_TIMEOUT_MS,
 } from './config.js';
 import {noSubnet} from './ecs.js';
+import {describeError, logEvent} from './log.js';
 import {buildQuery} from './query.js';
 import {
   OPTION_ECS,
@@ -152,7 +154,23 @@ async function forward(wire: Uint8Array): Promise<UpstreamReply> {
   try {
     const reply = await Promise.any([preferred, backup]);
     recordLatency(started);
+    const elapsed = performance.now() - started;
+    if (elapsed > SLOW_UPSTREAM_MS) {
+      logEvent('warn', 'slow_upstream', {
+        host: new URL(UPSTREAM).host,
+        ms: Math.round(elapsed),
+        hedged: hedged !== undefined,
+      });
+    }
     return reply;
+  } catch (error) {
+    logEvent(
+      'error',
+      'upstream_failed',
+      {host: new URL(UPSTREAM).host, cause: describeError(error)},
+      error
+    );
+    throw error;
   } finally {
     clearTimeout(timer);
     primary.abort(); // Cancel the loser.

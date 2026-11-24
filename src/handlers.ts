@@ -9,6 +9,7 @@ import {RECORD_TYPES, TTL_UNCACHED, TYPE_NAPTR, TYPE_PTR} from './constants.js';
 import {makeQuestion, MultipleQuestionsError, parseQuestion} from './query.js';
 import {clientEcs, parseEcsParam, reverseName} from './ecs.js';
 import {toJson} from './format.js';
+import {describeError, logEvent} from './log.js';
 import {formErrorHeader} from './response.js';
 import {profileResponse, rangesResponse} from './profile.js';
 import {resolve, upstreamFailure} from './resolve.js';
@@ -74,7 +75,13 @@ async function resolveOrFail(
   let result: Result;
   try {
     result = await resolve(question, options);
-  } catch {
+  } catch (error) {
+    logEvent(
+      'error',
+      'servfail',
+      {name: question.name, type: question.type, cause: describeError(error)},
+      error
+    );
     result = upstreamFailure(question);
   }
   return {result, first: performance.now() - started};
@@ -242,7 +249,13 @@ function jsonResponse(
   let json;
   try {
     json = toJson(result.body);
-  } catch {
+  } catch (error) {
+    logEvent(
+      'error',
+      'json_unreadable',
+      {name: question.name, type: question.type, cause: describeError(error)},
+      error
+    );
     result = upstreamFailure(question);
     json = toJson(result.body);
   }

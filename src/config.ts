@@ -48,6 +48,15 @@ export const STALE_TTL = 30;
 export const HEDGE_MIN_MS = 20;
 export const HEDGE_MAX_MS = 80;
 
+/**
+ * What `src/log.ts` writes: `warn` is failures and slow upstream answers,
+ * `error` is failures only, `off` is nothing.
+ */
+export const LOG_LEVEL: 'off' | 'error' | 'warn' = 'warn';
+
+/** An upstream answer slower than this (ms) is logged as a warning. */
+export const SLOW_UPSTREAM_MS = 300;
+
 /** Answer NXDOMAIN locally for private and undelegated names. */
 export const BLOCK_UNDELEGATED = true;
 
