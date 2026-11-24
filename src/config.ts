@@ -45,8 +45,8 @@ export const STALE_TTL = 30;
  * the open connection: no new handshake, but it only helps against a slow
  * request, not a slow connection.
  */
-export const HEDGE_MIN_MS = 20;
-export const HEDGE_MAX_MS = 80;
+export const HEDGE_MIN_MS = 15;
+export const HEDGE_MAX_MS = 50;
 
 /**
  * How long a request waits for work that another request started (the same
@@ -54,7 +54,7 @@ export const HEDGE_MAX_MS = 80;
  * The other request may be gone (its client disconnected), and then its work
  * never finishes; a request left waiting for it would be cancelled as hung.
  */
-export const SHARED_WAIT_MS = 100;
+export const SHARED_WAIT_MS = 50;
 
 /**
  * What `src/log.ts` writes: `warn` is failures and slow upstream answers,

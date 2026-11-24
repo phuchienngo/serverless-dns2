@@ -102,7 +102,7 @@ Blocked names get NXDOMAIN. The lists are part of the Worker bundle, so nothing 
 
 - Serve-stale: an expired answer (up to 6 h past its TTL) is returned at once with TTL 30 and renewed in the background.
 - The Cache API lookup and the upstream call run in parallel; the first answer wins and the upstream call always renews the cache.
-- Every upstream query (the ECS one and the one without) is hedged: it waits three times the recent average upstream latency, bounded to 20–80 ms. If the query is still pending,
+- Every upstream query (the ECS one and the one without) is hedged: it waits three times the recent average upstream latency, bounded to 15–50 ms. If the query is still pending,
   it sends a second request to `UPSTREAM_BACKUP` if set, or to `UPSTREAM` again, usually on the same connection.
   The first answer wins.
 - These speed-ups cost the upstream extra queries (every cache miss in the isolate's memory asks it, a slow query is sent twice, and with ECS on every query is sent twice): see "Trade-offs" in `FEATURES.md`.
