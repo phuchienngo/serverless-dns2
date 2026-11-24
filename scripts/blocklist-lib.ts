@@ -162,7 +162,7 @@ function solve(
  * Solves one shard: starts with one slot per name, the least possible, and
  * adds one until some seed has a solution.
  */
-function solveShard(
+export function solveShard(
   h0s: number[],
   h1s: number[],
   bits: number
@@ -184,14 +184,28 @@ function solveShard(
   }
 }
 
-/**
- * Encodes the domains as a Ribbon filter of `bits`-bit slots (see
- * src/blockset.ts) and checks that every domain can be found in the result.
- */
-export function buildBlockset(domains: Set<string>, bits: number): Uint8Array {
+/** What `solveShard` returns for one shard. */
+export interface SolvedShard {
+  seed: number;
+  values: Uint32Array;
+}
+
+function checkBits(bits: number): void {
   if (!Number.isInteger(bits) || bits < 0 || bits > 32) {
     throw new Error(`precision must be 0 to 32 bits, not ${bits}`);
   }
+}
+
+/**
+ * Drops the domains whose parent is listed too, and splits the rest by hash
+ * into shards of about SHARD_KEYS.
+ * @return The kept domains, and the two hashes of each one, per shard.
+ */
+export function partitionShards(
+  domains: Set<string>,
+  bits: number
+): {kept: string[]; shards: number; h0s: number[][]; h1s: number[][]} {
+  checkBits(bits);
   const kept: string[] = [];
   for (const domain of domains) {
     let covered = false;
@@ -219,13 +233,19 @@ export function buildBlockset(domains: Set<string>, bits: number): Uint8Array {
     h0s[shard].push(h0);
     h1s[shard].push(h1);
   }
-  const solved = h0s.map((h0, shard) => {
-    const result = solveShard(h0, h1s[shard], bits);
-    if ((shard + 1) % 10 === 0 || shard + 1 === shards) {
-      console.log(`  shard ${shard + 1}/${shards} solved`);
-    }
-    return result;
-  });
+  return {kept, shards, h0s, h1s};
+}
+
+/**
+ * Writes the file from the solved shards and checks that every domain can be
+ * found in the result.
+ */
+export function assembleBlockset(
+  kept: string[],
+  solved: SolvedShard[],
+  bits: number
+): Uint8Array {
+  const shards = solved.length;
   const slots = solved.reduce((sum, {values}) => sum + values.length, 0);
 
   const tableStart = HEADER_WORDS + shards;
@@ -256,6 +276,22 @@ export function buildBlockset(domains: Set<string>, bits: number): Uint8Array {
     `${kept.length} domains -> ${slots} slots of ${bits} bits in ${shards} shards`
   );
   return out;
+}
+
+/**
+ * Encodes the domains as a Ribbon filter of `bits`-bit slots (see
+ * src/blockset.ts) and checks that every domain can be found in the result.
+ */
+export function buildBlockset(domains: Set<string>, bits: number): Uint8Array {
+  const {kept, shards, h0s, h1s} = partitionShards(domains, bits);
+  const solved = h0s.map((h0, shard) => {
+    const result = solveShard(h0, h1s[shard], bits);
+    if ((shard + 1) % 10 === 0 || shard + 1 === shards) {
+      console.log(`  shard ${shard + 1}/${shards} solved`);
+    }
+    return result;
+  });
+  return assembleBlockset(kept, solved, bits);
 }
 
 /**

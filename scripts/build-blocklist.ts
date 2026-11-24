@@ -5,7 +5,8 @@
 
 import {mkdir, readFile, writeFile} from 'node:fs/promises';
 import {dirname, join} from 'node:path';
-import {buildBlockset, dropMatched, parseDomain} from './blocklist-lib.js';
+import {dropMatched, parseDomain} from './blocklist-lib.js';
+import {buildBlocksetParallel} from './blocklist-parallel.js';
 import {parseCidrs} from '../src/ipv4.js';
 import {describeCloudflare} from './cloudflare-probe.js';
 import {
@@ -66,10 +67,13 @@ async function main() {
   );
 
   const domains = new Set<string>();
-  for (const source of BLOCKLIST.lists) {
+  // Downloaded together, read in the order of the list: the file does not
+  // depend on which download finished first.
+  const texts = await Promise.all(BLOCKLIST.lists.map(readSource));
+  for (const [i, source] of BLOCKLIST.lists.entries()) {
     const before = domains.size;
     let total = 0;
-    for (const line of (await readSource(source)).split(/\r?\n/)) {
+    for (const line of texts[i].split(/\r?\n/)) {
       const domain = parseDomain(line);
       if (domain) {
         total++;
@@ -101,7 +105,10 @@ async function main() {
   const cloudflareIps = await describeCloudflare(cloudflare, PROBE_HOST);
 
   console.log(`Encoding ${domains.size} domains`);
-  const blockset = buildBlockset(domains, BLOCKLIST_PRECISION_BITS);
+  const blockset = await buildBlocksetParallel(
+    domains,
+    BLOCKLIST_PRECISION_BITS
+  );
   // Written last, so a failed source leaves the previous files untouched.
   await mkdir(dirname(outPath), {recursive: true});
   await writeFile(

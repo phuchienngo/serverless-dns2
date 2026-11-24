@@ -71,7 +71,7 @@ Workers Logs is on, but the automatic line per request is off (`invocation_logs:
    (a Ribbon filter: each domain's hash selects some of 64 consecutive slots of `BLOCKLIST_PRECISION_BITS` bits, and
    the build solves for slot values that XOR to the domain's fingerprint; about 20.02 bits per domain at 20 bits, where
    20 is the least possible; blocking a domain blocks its subdomains). The domains are split into shards of about
-   2048, each solved on its own with the fewest slots that work, which takes a minute or two. The file is bundled with the Worker
+   2048, each solved on its own with the fewest slots that work, on one thread per CPU (`scripts/blocklist-parallel.ts`; the file is the same as with one thread, byte for byte): about 40 s for 550,000 domains on 8 cores, a few minutes on one. The file is bundled with the Worker
    and read in place: a new isolate only reads the small shard index. The slots are stored bit by bit in columns, so a lookup compares one fingerprint bit
    at a time and stops at the first that differs: about two steps for a name that is not listed.
    A name that is not listed is wrongly blocked with a probability of 2^-20 per suffix looked up (set

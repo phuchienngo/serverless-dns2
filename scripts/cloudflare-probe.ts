@@ -34,9 +34,23 @@ export function sampleAddresses(cidr: string): string[] {
     .map(o => at(start + o));
 }
 
-/** @return Whether `host` answers 200 on `/cdn-cgi/trace` at this address. */
+/**
+ * @return Whether `host` answers 200 on `/cdn-cgi/trace` at this address, within
+ *     TIMEOUT_MS. The `timeout` option of the request only watches an idle
+ *     socket, and Bun does not apply it while connecting, so an address that
+ *     does not answer would hold the build for the system's connect timeout
+ *     (75 s on macOS); the timer is the real limit.
+ */
 function answers(address: string, host: string): Promise<boolean> {
-  return new Promise(resolve => {
+  return new Promise(done => {
+    const resolve = (answered: boolean) => {
+      clearTimeout(limit);
+      done(answered);
+    };
+    const limit = setTimeout(() => {
+      req.destroy();
+      resolve(false);
+    }, TIMEOUT_MS);
     const req = request(
       {
         hostname: address,
