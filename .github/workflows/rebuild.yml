@@ -1,6 +1,6 @@
-# Tests, then builds the blocklist and deploys the Worker: on every push to
-# main, and every day so the lists stay current. A failing test stops the
-# build; a failing source stops the deploy. Either way the previous version
+# One job: tests, then builds the blocklist and deploys the Worker, on every
+# push to main and every day so the lists stay current. A failing test stops
+# the build; a failing source stops the deploy. Either way the previous version
 # keeps serving.
 name: Build and deploy
 
@@ -16,8 +16,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  test:
-    name: Test
+  deploy:
+    name: Test, build and deploy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -25,15 +25,6 @@ jobs:
       - run: bun install --frozen-lockfile
       - name: Unit tests
         run: bun run test
-
-  build:
-    name: Build and deploy
-    needs: test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: oven-sh/setup-bun@v2
-      - run: bun install --frozen-lockfile
       - name: Build the blocklist
         run: bun run build-lists
       - name: Smoke test Worker
