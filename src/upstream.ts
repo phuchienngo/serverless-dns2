@@ -156,18 +156,23 @@ async function forward(wire: Uint8Array): Promise<UpstreamReply> {
     recordLatency(started);
     const elapsed = performance.now() - started;
     if (elapsed > SLOW_UPSTREAM_MS) {
-      logEvent('warn', 'slow_upstream', {
-        host: new URL(UPSTREAM).host,
-        ms: Math.round(elapsed),
+      const host = new URL(UPSTREAM).host;
+      const ms = Math.round(elapsed);
+      logEvent('warn', 'slow_upstream', `${host} answered in ${ms} ms`, {
+        host,
+        ms,
         hedged: hedged !== undefined,
       });
     }
     return reply;
   } catch (error) {
+    const host = new URL(UPSTREAM).host;
+    const cause = describeError(error);
     logEvent(
       'error',
       'upstream_failed',
-      {host: new URL(UPSTREAM).host, cause: describeError(error)},
+      `${host} failed: ${cause}`,
+      {host, cause},
       error
     );
     throw error;

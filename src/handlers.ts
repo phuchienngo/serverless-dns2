@@ -15,6 +15,13 @@ import {profileResponse, rangesResponse} from './profile.js';
 import {resolve, upstreamFailure} from './resolve.js';
 import type {Context, Question, ResolveOptions, Result} from './types.js';
 
+/** @return The name of a record type (`AAAA`), or its number if unknown. */
+function typeName(type: number): string {
+  return (
+    Object.keys(RECORD_TYPES).find(k => RECORD_TYPES[k] === type) ?? `${type}`
+  );
+}
+
 function textResponse(
   message: string,
   status: number,
@@ -76,10 +83,12 @@ async function resolveOrFail(
   try {
     result = await resolve(question, options);
   } catch (error) {
+    const cause = describeError(error);
     logEvent(
       'error',
       'servfail',
-      {name: question.name, type: question.type, cause: describeError(error)},
+      `SERVFAIL for ${typeName(question.type)} ${question.name}: ${cause}`,
+      {name: question.name, type: question.type, cause},
       error
     );
     result = upstreamFailure(question);
@@ -250,10 +259,12 @@ function jsonResponse(
   try {
     json = toJson(result.body);
   } catch (error) {
+    const cause = describeError(error);
     logEvent(
       'error',
       'json_unreadable',
-      {name: question.name, type: question.type, cause: describeError(error)},
+      `Answer for ${typeName(question.type)} ${question.name} is not readable: ${cause}`,
+      {name: question.name, type: question.type, cause},
       error
     );
     result = upstreamFailure(question);

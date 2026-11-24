@@ -42,12 +42,13 @@ afterEach(() => {
 
 describe('logEvent', () => {
   test('writes the event and its fields as one object, not a string', () => {
-    logEvent('error', 'boom', {name: 'a.example', type: 1});
+    logEvent('error', 'boom', 'It broke', {name: 'a.example', type: 1});
     assert.equal(lines.length, 1);
     assert.equal(lines[0].level, 'error');
     assert.equal(typeof lines[0].json, 'object');
     assert.deepEqual(lines[0].json, {
       event: 'boom',
+      message: 'It broke',
       name: 'a.example',
       type: 1,
     });
@@ -56,30 +57,30 @@ describe('logEvent', () => {
 
   test('passes the caught error beside the line, for Workers Issues', () => {
     const cause = new Error('upstream 500');
-    logEvent('error', 'boom', {}, cause);
+    logEvent('error', 'boom', 'm', {}, cause);
     assert.equal(lines[0].error, cause);
-    logEvent('error', 'other', {}, 'not an Error object');
+    logEvent('error', 'other', 'm', {}, 'not an Error object');
     assert.equal(lines[1].error, undefined);
   });
 
   test('holds back the same kind for 10 s, then says how many', () => {
-    logEvent('error', 'boom', {});
+    logEvent('error', 'boom', 'm', {});
     clock += 9_999;
-    logEvent('error', 'boom', {});
-    logEvent('error', 'boom', {});
+    logEvent('error', 'boom', 'm', {});
+    logEvent('error', 'boom', 'm', {});
     assert.equal(lines.length, 1);
     clock += 1;
-    logEvent('error', 'boom', {});
+    logEvent('error', 'boom', 'm', {});
     assert.equal(lines.length, 2);
     assert.equal(lines[1].json.held, 2);
     clock += 10_000;
-    logEvent('error', 'boom', {});
+    logEvent('error', 'boom', 'm', {});
     assert.equal(lines[2].json.held, undefined);
   });
 
   test('keeps a separate gap for each kind', () => {
-    logEvent('error', 'one', {});
-    logEvent('warn', 'two', {});
+    logEvent('error', 'one', 'm', {});
+    logEvent('warn', 'two', 'm', {});
     assert.deepEqual(
       lines.map(l => l.level),
       ['error', 'warn']
@@ -117,30 +118,30 @@ async function slowAnswer(name: string, delay: number): Promise<void> {
 describe('the log level', () => {
   test('warn writes both kinds, error only failures, off nothing', () => {
     setLogLevel('warn');
-    logEvent('error', 'a', {});
-    logEvent('warn', 'b', {});
+    logEvent('error', 'a', 'm', {});
+    logEvent('warn', 'b', 'm', {});
     assert.equal(lines.length, 2);
     resetLog();
     setLogLevel('error');
-    logEvent('error', 'a', {});
-    logEvent('warn', 'b', {});
+    logEvent('error', 'a', 'm', {});
+    logEvent('warn', 'b', 'm', {});
     assert.deepEqual(
       lines.slice(2).map(l => l.json.event),
       ['a']
     );
     resetLog();
     setLogLevel('off');
-    logEvent('error', 'a', {});
-    logEvent('warn', 'b', {});
+    logEvent('error', 'a', 'm', {});
+    logEvent('warn', 'b', 'm', {});
     assert.equal(lines.length, 3);
   });
 
   test('a line the level drops is not counted as held back', () => {
     setLogLevel('error');
-    logEvent('warn', 'slow', {});
-    logEvent('warn', 'slow', {});
+    logEvent('warn', 'slow', 'm', {});
+    logEvent('warn', 'slow', 'm', {});
     setLogLevel('warn');
-    logEvent('warn', 'slow', {});
+    logEvent('warn', 'slow', 'm', {});
     assert.equal(lines.length, 1);
     assert.equal(lines[0].json.held, undefined);
   });
@@ -154,10 +155,15 @@ describe('the log level', () => {
       resetLog();
       setLogLevel(value);
       await slowAnswer(`slow-${value}.log.example.com`, 350);
-      assert.equal(
-        lines.filter(l => l.json.event === 'slow_upstream').length,
-        expected
-      );
+      const slow = lines.filter(l => l.json.event === 'slow_upstream');
+      assert.equal(slow.length, expected);
+      if (expected) {
+        assert.match(
+          String(slow[0].json.message),
+          new RegExp(`^${new URL(UPSTREAM).host} answered in \\d+ ms$`)
+        );
+        assert.ok(Number(slow[0].json.ms) >= 300);
+      }
     }
     const slow = lines.length ? lines[0] : null;
     assert.equal(slow, null);
@@ -220,6 +226,14 @@ describe('what the gateway logs', () => {
     assert.equal(servfail.level, 'error');
     assert.equal(servfail.json.name, 'down.log.example.com');
     assert.equal(servfail.json.type, T.A);
+    assert.equal(
+      servfail.json.message,
+      'SERVFAIL for A down.log.example.com: upstream 500'
+    );
+    assert.equal(
+      failed.json.message,
+      `${new URL(UPSTREAM).host} failed: upstream 500`
+    );
     assert.ok(servfail.error instanceof Error, 'the error rides along');
     assert.ok(failed.error instanceof Error);
   });

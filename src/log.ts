@@ -55,11 +55,14 @@ export function describeError(error: unknown): string {
  * MIN_GAP_MS ago.
  * @param severity `error` for what fails a request, `warn` for what is only
  *     slow.
+ * @param message A sentence for the Message column of Workers Logs, which
+ *     shows nothing for an object that has no `message` field.
  * @param error The error that was caught, if any: logged beside the line.
  */
 export function logEvent(
   severity: 'error' | 'warn',
   event: string,
+  message: string,
   fields: Record<string, string | number | boolean>,
   error?: unknown
 ): void {
@@ -74,7 +77,7 @@ export function logEvent(
   }
   const held = kind?.held ?? 0;
   kinds.set(event, {at: now, held: 0});
-  const line = {event, ...fields, ...(held ? {held} : {})};
+  const line = {event, message, ...fields, ...(held ? {held} : {})};
   if (error instanceof Error) {
     console[severity](line, error);
   } else {
