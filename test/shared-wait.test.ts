@@ -18,7 +18,22 @@ const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 const never = () => new Promise<never>(() => {});
 /** An answer to `question`, marked with `n` in its last byte. */
 const answer = (n: number): Result => ({
-  body: new Uint8Array([0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, ...question.raw, n]),
+  body: new Uint8Array([
+    0,
+    0,
+    0,
+    0,
+    0,
+    1,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    ...question.raw,
+    n,
+  ]),
   ttl: 60,
 });
 const mark = (result: Result) => result.body[result.body.length - 1];
@@ -164,7 +179,10 @@ describe('Loaded', () => {
       await sleep(20);
       return 'key';
     });
-    const both = await Promise.all([value.get(undefined), value.get(undefined)]);
+    const both = await Promise.all([
+      value.get(undefined),
+      value.get(undefined),
+    ]);
     assert.deepEqual(both, ['key', 'key']);
     assert.equal(loads, 1);
   });

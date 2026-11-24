@@ -34,6 +34,7 @@ import {
 } from './wire.js';
 import {redirectedResult, redirectTarget} from './redirects.js';
 import {minTtl} from './response.js';
+import {LATE, within} from './wait.js';
 import type {Question, Result} from './types.js';
 
 interface UpstreamReply {
@@ -122,6 +123,30 @@ async function post(
   }
 }
 
+const UPSTREAM_HOST = new URL(UPSTREAM).host;
+
+/** Logs an answer that took `elapsed` ms. */
+function logSlow(elapsed: number, hedged: boolean): void {
+  const ms = Math.round(elapsed);
+  logEvent('warn', 'slow_upstream', `${UPSTREAM_HOST} answered in ${ms} ms`, {
+    host: UPSTREAM_HOST,
+    ms,
+    hedged,
+  });
+}
+
+/** Logs a query that failed on every try. */
+function logFailure(error: unknown): void {
+  const cause = describeError(error);
+  logEvent(
+    'error',
+    'upstream_failed',
+    `${UPSTREAM_HOST} failed: ${cause}`,
+    {host: UPSTREAM_HOST, cause},
+    error
+  );
+}
+
 /** Recent upstream latency in ms (moving average), for the hedge delay. */
 let latencyAverage = 30;
 
@@ -157,25 +182,11 @@ async function forward(wire: Uint8Array): Promise<UpstreamReply> {
     recordLatency(started);
     const elapsed = performance.now() - started;
     if (elapsed > SLOW_UPSTREAM_MS) {
-      const host = new URL(UPSTREAM).host;
-      const ms = Math.round(elapsed);
-      logEvent('warn', 'slow_upstream', `${host} answered in ${ms} ms`, {
-        host,
-        ms,
-        hedged: hedged !== undefined,
-      });
+      logSlow(elapsed, hedged !== undefined);
     }
     return reply;
   } catch (error) {
-    const host = new URL(UPSTREAM).host;
-    const cause = describeError(error);
-    logEvent(
-      'error',
-      'upstream_failed',
-      `${host} failed: ${cause}`,
-      {host, cause},
-      error
-    );
+    logFailure(error);
     throw error;
   } finally {
     clearTimeout(timer);
@@ -295,19 +306,14 @@ export async function coalesce(
   if (!joined) {
     return startOwn(key, task);
   }
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  const patience = new Promise<null>(resolve => {
-    timer = setTimeout(resolve, SHARED_WAIT_MS, null);
-  });
+  let shared;
   try {
-    const shared = await Promise.race([joined, patience]);
-    if (shared) {
-      return retarget(shared, q);
-    }
+    shared = await within(joined, SHARED_WAIT_MS);
   } catch {
     return startOwn(key, task); // The other request failed; try on our own.
-  } finally {
-    clearTimeout(timer);
+  }
+  if (shared !== LATE) {
+    return retarget(shared, q);
   }
   const own = startOwn(key, task);
   // Whichever ends first: the other request's answer (if it fails, ours

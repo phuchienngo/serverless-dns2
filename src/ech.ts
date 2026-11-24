@@ -22,6 +22,7 @@ import {FLAG_AD, encodeName, parseAnswers, rcodeOf, u16} from './wire.js';
 import {makeRecord, respond} from './response.js';
 import {inBlocks, type Ipv4Block} from './ipv4.js';
 import {Loaded} from './loaded.js';
+import {describeError, logEvent} from './log.js';
 import {
   addSvcParam,
   alpnValue,
@@ -125,12 +126,71 @@ function hintedCloudflare(
 }
 
 /**
+ * @return A new HTTPS record that carries only the ECH key, as an answer to
+ *     a name for which the upstream sent none.
+ */
+function synthesizeHttps(q: Question, config: Uint8Array): Result {
+  const rdata = svcbRdata(1, '.', [
+    [SVCPARAM_ALPN, alpnValue(ALPN_HTTP)],
+    [SVCPARAM_ECH, [...config]],
+  ]);
+  const record = makeRecord(TYPE_HTTPS, SYNTHETIC_TTL, rdata);
+  return {body: respond(q, RCODE_NOERROR, [record]), ttl: SYNTHETIC_TTL};
+}
+
+/** @return `result` with the ECH key added to each of the `services` records. */
+function addToServices(
+  result: Result,
+  services: ReturnType<typeof parseAnswers>,
+  config: Uint8Array
+): Result {
+  // From the last record to the first, so that the offsets still hold.
+  const changed = [...services]
+    .reverse()
+    .reduce((msg, r) => addSvcParam(msg, r, SVCPARAM_ECH, config), result.body);
+  // The records are no longer what was validated: AD must not claim it
+  // (RFC 4035 3.2.3; a query with AD but no DO gets it from the upstream).
+  changed[3] &= ~FLAG_AD;
+  return {body: changed, ttl: result.ttl};
+}
+
+/**
+ * @return The answer with ECH added, or null if it needs none or the name is
+ *     not served by Cloudflare. The IPv4 hints of the answer, if it has any,
+ *     tell whether the name is on Cloudflare; otherwise the probe's A query
+ *     does.
+ */
+async function withEch(
+  result: Result,
+  q: Question,
+  probe: EchProbe
+): Promise<Result | null> {
+  const {body} = result;
+  const records = parseAnswers(body).filter(r => r.type === TYPE_HTTPS);
+  if (records.some(r => svcParam(body, r, SVCPARAM_ECH))) {
+    return null; // Already has ECH.
+  }
+  // AliasMode records have no parameters to add the key to.
+  const services = records.filter(r => !isAliasMode(body, r));
+  if (records.length && !services.length) {
+    return null;
+  }
+  const onCloudflare =
+    hintedCloudflare(body, records, probe.ranges) ?? (await probe.cloudflare);
+  const config = onCloudflare ? await probe.config : null;
+  if (!config) {
+    return null;
+  }
+  return services.length
+    ? addToServices(result, services, config)
+    : synthesizeHttps(q, config);
+}
+
+/**
  * Adds ECH to the HTTPS answer when `result` has none and the name is served
- * by Cloudflare: to the records the upstream sent (AliasMode ones have no
- * parameters to add it to), or, when it sent no HTTPS record, as a new one.
- * The IPv4 hints of the answer, if it has any, tell whether the name is on
- * Cloudflare; otherwise the probe's A query does.
- * Returns `result` unchanged otherwise, or if anything fails.
+ * by Cloudflare: to the records the upstream sent, or, when it sent no HTTPS
+ * record, as a new one. Returns `result` unchanged otherwise. ECH is best
+ * effort: a failure is logged and the answer is kept as it is.
  */
 export async function addEch(
   result: Result,
@@ -141,38 +201,16 @@ export async function addEch(
     return result;
   }
   try {
-    const {body} = result;
-    const records = parseAnswers(body).filter(r => r.type === TYPE_HTTPS);
-    if (records.some(r => svcParam(body, r, SVCPARAM_ECH))) {
-      return result; // Already has ECH.
-    }
-    const services = records.filter(r => !isAliasMode(body, r));
-    if (records.length && !services.length) {
-      return result;
-    }
-    const onCloudflare =
-      hintedCloudflare(body, records, probe.ranges) ?? (await probe.cloudflare);
-    const config = onCloudflare ? await probe.config : null;
-    if (!config) {
-      return result;
-    }
-    if (!services.length) {
-      const rdata = svcbRdata(1, '.', [
-        [SVCPARAM_ALPN, alpnValue(ALPN_HTTP)],
-        [SVCPARAM_ECH, [...config]],
-      ]);
-      const record = makeRecord(TYPE_HTTPS, SYNTHETIC_TTL, rdata);
-      return {body: respond(q, RCODE_NOERROR, [record]), ttl: SYNTHETIC_TTL};
-    }
-    // From the last record to the first, so that the offsets still hold.
-    const changed = [...services]
-      .reverse()
-      .reduce((msg, r) => addSvcParam(msg, r, SVCPARAM_ECH, config), body);
-    // The records are no longer what was validated: AD must not claim it
-    // (RFC 4035 3.2.3; a query with AD but no DO gets it from the upstream).
-    changed[3] &= ~FLAG_AD;
-    return {body: changed, ttl: result.ttl};
-  } catch {
-    return result; // ECH is best effort: keep the answer as it is.
+    return (await withEch(result, q, probe)) ?? result;
+  } catch (error) {
+    const cause = describeError(error);
+    logEvent(
+      'warn',
+      'ech_failed',
+      `ECH not added to ${q.name}: ${cause}`,
+      {name: q.name, cause},
+      error
+    );
+    return result;
   }
 }

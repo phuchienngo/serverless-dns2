@@ -6,6 +6,7 @@
  */
 
 import {SHARED_WAIT_MS} from './config.js';
+import {LATE, within} from './wait.js';
 
 export const RETRY_DELAY_MS = 60 * 1000;
 
@@ -69,18 +70,9 @@ export class Loaded<Arg, Value> {
     loading: Promise<Value | null>,
     arg: Arg
   ): Promise<Value | null> {
-    const late = Symbol('late');
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const patience = new Promise<typeof late>(resolve => {
-      timer = setTimeout(resolve, SHARED_WAIT_MS, late);
-    });
-    try {
-      const loaded = await Promise.race([loading, patience]);
-      if (loaded !== late) {
-        return loaded;
-      }
-    } finally {
-      clearTimeout(timer);
+    const loaded = await within(loading, SHARED_WAIT_MS);
+    if (loaded !== LATE) {
+      return loaded;
     }
     return Promise.race([loading, this.start(arg)]);
   }

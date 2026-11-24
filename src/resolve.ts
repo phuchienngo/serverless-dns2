@@ -3,7 +3,7 @@
  * the upstream resolver. Shared by the `/dns-query` and `/resolve` endpoints.
  */
 
-import {lookupLocal, lookupShared, store} from './cache.js';
+import {lookupLocal, lookupShared, store, type Hit} from './cache.js';
 import {blockReason, nxdomain, screen} from './blocking.js';
 import {
   EDE_NETWORK_ERROR,
@@ -20,6 +20,7 @@ import {
 import {
   makeRecord,
   copyRd,
+  type OptEdit,
   edeOption,
   respond,
   rewriteOpt,
@@ -126,6 +127,33 @@ export async function resolve(
 }
 
 /**
+ * @param chosen Whether the client chose its subnet.
+ * @param ecs The subnet option the client sent, if any.
+ * @return How to edit the ECS option of the response: dropped for a client
+ *     that did not choose a subnet, else the client's own subnet echoed back.
+ */
+function ecsEdit(
+  chosen: boolean,
+  ecs: Uint8Array | null | undefined
+): Pick<OptEdit, 'remove' | 'replace'> {
+  if (!chosen) {
+    return {remove: OPTION_ECS};
+  }
+  if (!ecs) {
+    return {};
+  }
+  return {
+    replace: {
+      code: OPTION_ECS,
+      withData: data => clientEcsReply(data, ecs),
+      // No subnet in the reply means scope 0 (RFC 7871 7.3), and a client
+      // that sent one gets one back (7.2.2).
+      whenMissing: [...ecs.subarray(0, 3), 0, ...ecs.subarray(4)],
+    },
+  };
+}
+
+/**
  * Shapes an answer for the client that asked: its RD flag, the EDNS parts
  * (an OPT record only if it sent one, ECS as it sent it, EDE for a stale
  * answer, a cookie, padding last so that the size is final).
@@ -151,20 +179,8 @@ async function shape(
   if (cookie) {
     added.push(cookie);
   }
-  const {ecs} = q;
-  const chosen = clientChoseEcs(options);
   return rewriteOpt(body, {
-    remove: chosen ? undefined : OPTION_ECS,
-    replace:
-      chosen && ecs
-        ? {
-            code: OPTION_ECS,
-            withData: data => clientEcsReply(data, ecs),
-            // No subnet in the reply means scope 0 (RFC 7871 7.3), and a
-            // client that sent one gets one back (7.2.2).
-            whenMissing: [...ecs.subarray(0, 3), 0, ...ecs.subarray(4)],
-          }
-        : undefined,
+    ...ecsEdit(clientChoseEcs(options), q.ecs),
     add: added,
     pad: q.padding,
   });
@@ -245,6 +261,17 @@ async function answer(q: Question, options: ResolveOptions): Promise<Result> {
   const fetching = fetchFresh();
   waitUntil?.(fetching.catch(() => {})); // Failure is handled where it is awaited.
   const shared = lookupShared(cache, key, q).catch(() => null); // A miss.
+  return firstAnswer(shared, fetching);
+}
+
+/**
+ * @return The answer of whichever of the Cache API hit and the upstream call
+ *     comes first; a miss or a failure waits for the other one.
+ */
+export async function firstAnswer(
+  shared: Promise<Hit | null>,
+  fetching: Promise<Result>
+): Promise<Result> {
   const first = await Promise.race([
     shared.then(hit => hit?.result ?? null),
     fetching.catch(() => null),

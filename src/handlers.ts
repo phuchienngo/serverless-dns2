@@ -249,15 +249,16 @@ export async function handleJson(
     : jsonResponse(question, result, first);
 }
 
-/** @return The JSON form of an answer, or of SERVFAIL if it cannot be read. */
-function jsonResponse(
+/**
+ * @return The JSON form of an answer, and the answer it was made from: SERVFAIL
+ *     if the answer cannot be read.
+ */
+export function readable(
   question: Question,
-  result: Result,
-  first: number
-): Response {
-  let json;
+  result: Result
+): {json: ReturnType<typeof toJson>; result: Result} {
   try {
-    json = toJson(result.body);
+    return {json: toJson(result.body), result};
   } catch (error) {
     const cause = describeError(error);
     logEvent(
@@ -267,9 +268,18 @@ function jsonResponse(
       {name: question.name, type: question.type, cause},
       error
     );
-    result = upstreamFailure(question);
-    json = toJson(result.body);
+    const failure = upstreamFailure(question);
+    return {json: toJson(failure.body), result: failure};
   }
+}
+
+/** @return The JSON response to a question, with its headers. */
+function jsonResponse(
+  question: Question,
+  answer: Result,
+  first: number
+): Response {
+  const {json, result} = readable(question, answer);
   const headers = responseHeaders(
     'application/json; charset=UTF-8',
     result,

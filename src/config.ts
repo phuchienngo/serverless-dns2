@@ -15,9 +15,9 @@ export const UPSTREAM_BACKUP: string | null = null;
 /**
  * Send the client's subnet to the upstream (EDNS Client Subnet, RFC 7871), so
  * that a CDN answers with a server near the client. Turn it off for a resolver
- * that does not pass it on (Cloudflare's 1.1.1.1 does not; Gateway, Google and Quad9's dns11 do): the
- * query then carries no ECS, one query is made instead of two, and the cache keeps one
- * answer for every client.
+ * that does not pass it on (Cloudflare's 1.1.1.1 does not; Gateway, Google and
+ * Quad9's dns11 do): the query then carries no ECS, one query is made instead
+ * of two, and the cache keeps one answer for every client.
  */
 export const ECS_ENABLED = true;
 
