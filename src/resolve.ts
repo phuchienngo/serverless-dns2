@@ -232,10 +232,15 @@ async function answer(q: Question, options: ResolveOptions): Promise<Result> {
 
   const key = cacheKey(host, q, ecs);
   const fetchFresh = async () => {
-    const result = await coalesce(key, q, async () => {
-      const probe = startEchProbe(q, ecs);
-      return addEch(await askUpstream(q, ecs, flags), q, probe);
-    });
+    const result = await coalesce(
+      key,
+      q,
+      async () => {
+        const probe = startEchProbe(q, ecs, waitUntil);
+        return addEch(await askUpstream(q, ecs, flags), q, probe);
+      },
+      waitUntil
+    );
     store(cache, key, result, waitUntil);
     return result;
   };

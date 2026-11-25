@@ -106,6 +106,32 @@ describe('coalesce', () => {
     assert.equal(mark(await slow), 5);
   });
 
+  test('every task it starts is kept alive for the request', async () => {
+    const kept: Promise<unknown>[] = [];
+    const keepAlive = (work: Promise<unknown>) => void kept.push(work);
+    void coalesce('k', question, never, keepAlive);
+    await coalesce('k', question, async () => answer(2), keepAlive);
+    assert.equal(
+      kept.length,
+      2,
+      'the one it started, and the one it joined late'
+    );
+  });
+
+  test('a caller that joins in time starts nothing to keep alive', async () => {
+    const kept: Promise<unknown>[] = [];
+    const keepAlive = (work: Promise<unknown>) => void kept.push(work);
+    const task = async () => {
+      await sleep(10);
+      return answer(1);
+    };
+    await Promise.all([
+      coalesce('k', question, task, keepAlive),
+      coalesce('k', question, task, keepAlive),
+    ]);
+    assert.equal(kept.length, 1);
+  });
+
   test('a failed first request leaves the caller to try on its own', async () => {
     void coalesce('k', question, async () => {
       throw new Error('down');
@@ -170,6 +196,19 @@ describe('Loaded', () => {
     });
     void value.get(undefined);
     assert.equal(await value.get(undefined), 'first');
+  });
+
+  test('a load that it starts is kept alive for the request', async () => {
+    const kept: Promise<unknown>[] = [];
+    const keepAlive = (work: Promise<unknown>) => void kept.push(work);
+    let loads = 0;
+    const value = new Loaded(async () => {
+      loads++;
+      return loads === 1 ? never() : 'key';
+    });
+    void value.get(undefined, keepAlive);
+    assert.equal(await value.get(undefined, keepAlive), 'key');
+    assert.equal(kept.length, 2);
   });
 
   test('a load that ends in time is shared', async () => {

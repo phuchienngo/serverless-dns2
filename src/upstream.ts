@@ -34,7 +34,7 @@ import {
 } from './wire.js';
 import {redirectedResult, redirectTarget} from './redirects.js';
 import {minTtl} from './response.js';
-import {LATE, within} from './wait.js';
+import {Flight, LATE} from './wait.js';
 import type {Question, Result} from './types.js';
 
 interface UpstreamReply {
@@ -257,7 +257,7 @@ export async function askUpstream(
 }
 
 /** Queries in flight, so identical concurrent ones share one upstream call. */
-const pending = new Map<string, Promise<Result>>();
+const pending = new Map<string, Flight<Result>>();
 
 /** Forgets the latency average and the queries in flight (for tests). */
 export function resetUpstream(): void {
@@ -277,16 +277,26 @@ function retarget({body, ttl}: Result, q: Question): Result {
   return {body: copy, ttl};
 }
 
-/** Starts `task` as the query in flight for `key`. */
-function startOwn(key: string, task: () => Promise<Result>): Promise<Result> {
+/**
+ * Starts `task` as the query in flight for `key`.
+ * @param keepAlive Keeps the request running until the task is done, even if
+ *     the request has its answer by then: other requests wait for the task.
+ */
+function startOwn(
+  key: string,
+  task: () => Promise<Result>,
+  keepAlive?: (work: Promise<unknown>) => void
+): Promise<Result> {
   const own = task();
-  pending.set(key, own);
+  const flight = new Flight(own);
+  pending.set(key, flight);
   const done = () => {
-    if (pending.get(key) === own) {
+    if (pending.get(key) === flight) {
       pending.delete(key);
     }
   };
   own.then(done, done);
+  keepAlive?.(own.catch(() => {}));
   return own;
 }
 
@@ -300,26 +310,31 @@ function startOwn(key: string, task: () => Promise<Result>): Promise<Result> {
 export async function coalesce(
   key: string,
   q: Question,
-  task: () => Promise<Result>
+  task: () => Promise<Result>,
+  keepAlive?: (work: Promise<unknown>) => void
 ): Promise<Result> {
-  const joined = pending.get(key);
-  if (!joined) {
-    return startOwn(key, task);
+  const flight = pending.get(key);
+  if (!flight) {
+    return startOwn(key, task, keepAlive);
   }
-  let shared;
   try {
-    shared = await within(joined, SHARED_WAIT_MS);
+    const shared = await flight.waitFor(SHARED_WAIT_MS);
+    if (shared !== LATE) {
+      return retarget(shared, q);
+    }
   } catch {
-    return startOwn(key, task); // The other request failed; try on our own.
+    return startOwn(key, task, keepAlive); // The other failed; try on our own.
   }
-  if (shared !== LATE) {
-    return retarget(shared, q);
+  const own = startOwn(key, task, keepAlive);
+  const waiting = flight.wait();
+  try {
+    // Whichever ends first: the other request's answer (if it fails, ours
+    // stands in) or ours, failure included, since the other may never end.
+    return await Promise.race([
+      waiting.result.then(shared => retarget(shared, q)).catch(() => own),
+      own,
+    ]);
+  } finally {
+    waiting.leave();
   }
-  const own = startOwn(key, task);
-  // Whichever ends first: the other request's answer (if it fails, ours
-  // stands in) or ours, failure included, since the other may never end.
-  return Promise.race([
-    joined.then(shared => retarget(shared, q)).catch(() => own),
-    own,
-  ]);
 }

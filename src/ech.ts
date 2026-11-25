@@ -86,11 +86,16 @@ interface EchProbe {
 
 /**
  * Starts the A lookup and ECH config lookup for an HTTPS query.
+ * @param keepAlive Keeps the request running until the work is done (the
+ *     `waitUntil` of the request): the answer may be ready first, and other
+ *     requests share the key's load, which must not belong to a request that
+ *     has ended.
  * @return null for other types or if the client requests DNSSEC records.
  */
 export function startEchProbe(
   q: Question,
-  ecs: number[] | null
+  ecs: number[] | null,
+  keepAlive?: (work: Promise<unknown>) => void
 ): EchProbe | null {
   if (q.type !== TYPE_HTTPS || q.dnssecOk) {
     return null;
@@ -99,11 +104,13 @@ export function startEchProbe(
   if (!ranges.length) {
     return null;
   }
-  return {
+  const probe = {
     cloudflare: behindCloudflare(q.name, ecs, ranges).catch(() => false),
-    config: echConfig.get(),
+    config: echConfig.get(undefined, keepAlive),
     ranges,
   };
+  keepAlive?.(probe.cloudflare);
+  return probe;
 }
 
 /**
