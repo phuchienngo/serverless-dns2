@@ -121,6 +121,7 @@ export const BLOCKLIST = {
     'content-loader.com', // Same as html-load.com.
     'dd.garena.com', // Garena login.
     'l.facebook.com', // Facebook's outbound link redirector.
+    'api.ipify.org', // Public IP lookup API.
   ],
   block: [
     '/^ad([sxv]?[0-9]*|system)[_.-][^.]+\\.|[_.-]ad([sxv]?[0-9]*|system)[_.-]/',
