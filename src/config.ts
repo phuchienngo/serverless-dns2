@@ -98,12 +98,15 @@ export const PROBE_HOST = 'dns.phuchien.me';
 
 export const BLOCKLIST = {
   lists: [
-    // Mullvad's DNS content blockers (the files its DoH service used): ads,
-    // trackers and malware, without the adult, gambling and social media ones.
-    // Used instead of HaGeZi's lists, which blocked too many names wrongly.
-    'https://raw.githubusercontent.com/mullvad/dns-blocklists/main/output/doh/doh_adblock.txt',
-    'https://raw.githubusercontent.com/mullvad/dns-blocklists/main/output/doh/doh_privacy.txt',
-    'https://raw.githubusercontent.com/mullvad/dns-blocklists/main/output/doh/doh_malware.txt',
+    // HaGeZi Multi ULTIMATE: Pro plus the most aggressive rules; it can break
+    // apps and sites, so put what breaks in `allow`.
+    'https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/ultimate-onlydomains.txt',
+    // HaGeZi Threat Intelligence Feeds, medium: malware, phishing, scams.
+    'https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/tif.medium-onlydomains.txt',
+    // HaGeZi referral domains (affiliate and tracking links). The project advises
+    // against blocking them: some search result links and unsubscribe links
+    // go through them.
+    'https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/blocklist-referral-onlydomains.txt',
   ],
   // Names that break apps or sites when blocked. An entry covers its subdomains.
   allow: [
