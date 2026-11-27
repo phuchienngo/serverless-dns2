@@ -98,12 +98,12 @@ export const PROBE_HOST = 'dns.phuchien.me';
 
 export const BLOCKLIST = {
   lists: [
-    // Mullvad's DNS content blockers (the files its VPN relays use): ads,
+    // Mullvad's DNS content blockers (the files its DoH service used): ads,
     // trackers and malware, without the adult, gambling and social media ones.
     // Used instead of HaGeZi's lists, which blocked too many names wrongly.
-    'https://raw.githubusercontent.com/mullvad/dns-blocklists/main/output/relay/relay_adblock.txt',
-    'https://raw.githubusercontent.com/mullvad/dns-blocklists/main/output/relay/relay_privacy.txt',
-    'https://raw.githubusercontent.com/mullvad/dns-blocklists/main/output/relay/relay_malware.txt',
+    'https://raw.githubusercontent.com/mullvad/dns-blocklists/main/output/doh/doh_adblock.txt',
+    'https://raw.githubusercontent.com/mullvad/dns-blocklists/main/output/doh/doh_privacy.txt',
+    'https://raw.githubusercontent.com/mullvad/dns-blocklists/main/output/doh/doh_malware.txt',
   ],
   // Names that break apps or sites when blocked. An entry covers its subdomains.
   allow: [
