@@ -2,7 +2,7 @@
 
 import assert from 'node:assert/strict';
 import {describe, test} from 'node:test';
-import {Flight, LATE} from '../src/wait.js';
+import {Flight, LATE, POLL_MS} from '../src/wait.js';
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 const NOT_YET = Symbol('not yet');
@@ -77,5 +77,33 @@ describe('Flight', () => {
     const leaving = new Flight(new Promise<void>(() => {}));
     leaving.wait().leave();
     assert.equal(leaving.attached, 0, 'after leave()');
+  });
+
+  test('a waiter notices the end of the work within a few ms', async () => {
+    let finish!: () => void;
+    const flight = new Flight(
+      new Promise<string>(r => (finish = () => r('ok')))
+    );
+    const waiting = flight.wait();
+    await sleep(20);
+    const ended = performance.now();
+    finish();
+    assert.equal(await waiting.result, 'ok');
+    assert.ok(performance.now() - ended < POLL_MS + 15);
+  });
+
+  test('the work never touches the promise of a waiter that has left', async () => {
+    let finish!: () => void;
+    const flight = new Flight(new Promise<void>(r => (finish = r)));
+    const waiting = flight.wait();
+    let settled = false;
+    waiting.result.then(
+      () => (settled = true),
+      () => (settled = true)
+    );
+    waiting.leave();
+    finish();
+    await sleep(POLL_MS * 5);
+    assert.equal(settled, false);
   });
 });
